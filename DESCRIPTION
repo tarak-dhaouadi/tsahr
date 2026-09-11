@@ -1,0 +1,31 @@
+Package: tsahr
+Type: Package
+Title: Trial Sequential Analysis for Meta-Analyses of Hazard Ratios
+Version: 0.2.5.1
+Authors@R: person("Tarak", "Dhaouadi", email = "dhaouaditarak@yahoo.fr", role = c("aut", "cre"))
+Description: Performs Trial Sequential Analysis (TSA) for meta-analyses of
+    time-to-event outcomes reported as hazard ratios. Implements the
+    Schoenfeld required-events sample-size formula generalised for unequal
+    allocation, the Diversity (D-squared) heterogeneity adjustment of
+    Wetterslev et al. (2009), and O'Brien-Fleming-type alpha- and
+    beta-spending trial sequential monitoring boundaries computed at the
+    inverse-variance information based on observed study-level log-HR
+    standard errors (not merely event counts), via
+    a self-contained recursive numerical integration engine with no
+    limit on the number of included studies. Produces a cumulative
+    Z-curve plot with efficacy, futility, and conventional significance
+    boundaries. Methodology follows Miladinovic et al. (2013)
+    <doi:10.1016/j.jclinepi.2012.11.007> and Wetterslev et al. (2009)
+    <doi:10.1186/1471-2288-9-86>.
+License: MIT + file LICENSE
+Encoding: UTF-8
+RoxygenNote: 7.3.1
+Depends: R (>= 4.0.0)
+Imports: metafor, readxl, ggplot2, stats, utils
+Suggests: testthat (>= 3.0.0)
+Config/testthat/edition: 3
+URL: https://github.com/tarak-dhaouadi/tsahr
+BugReports: https://github.com/tarak-dhaouadi/tsahr/issues
+NeedsCompilation: no
+Author: Tarak Dhaouadi [aut, cre]
+Maintainer: Tarak Dhaouadi <dhaouaditarak@yahoo.fr>

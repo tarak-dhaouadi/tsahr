@@ -1,0 +1,8 @@
+^Rplots\.pdf$
+^tests/testthat/Rplots\.pdf$
+^\.Rproj\.user$
+^.*\.Rproj$
+^\.github$
+^LICENSE\.md$
+^\.gitignore$
+^\.gitattributes$
