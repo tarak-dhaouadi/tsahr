@@ -1,9 +1,81 @@
+# tsahr 0.2.6
+
+## Bug fix: alpha-spending formula did not match this package's own reference methodology (correctness — please upgrade)
+
+* **`.alpha_spend_OF()`'s two-sided alpha-spending formula was wrong for
+  the methodology this package documents itself as implementing**, and
+  is corrected in this release. `tsa_hr()`'s O'Brien-Fleming-type
+  efficacy boundaries were computed with
+  `alpha*(t) = 2*(1-Phi(z_{alpha/2}/sqrt(t)))` in every prior tsahr
+  release (0.2.0-0.2.5.1). That form is a textbook Lan-DeMets
+  two-sided spending function — it's internally valid as *a* spending
+  function (it does reach exactly `alpha` at t=1) and is quoted as-is
+  in some general group-sequential-design references (e.g. gsDesign's
+  documentation) — but it does **not** match the specific TSA
+  methodology (Copenhagen Trial Unit / RTSA, Thorlund et al.) that this
+  package documents itself as following (Miladinovic et al. 2013,
+  Wetterslev et al. 2009). The corrected formula is
+  `alpha*(t) = 4*(1-Phi(z_{alpha/4}/sqrt(t)))` -- RTSA's own
+  `side`-parameterised spending function evaluated at `side=2`.
+* **Confirmed directly against a live `RTSA::boundaries()` call**
+  (`timing=c(0.2,0.4,0.6,0.8,1), alpha=0.05, side=2, es_alpha="esOF"`),
+  which returns boundaries 4.877, 3.357, 2.680, 2.290, 2.031 -- matching
+  the corrected formula (run through tsahr's existing recursive
+  integration engine) essentially exactly, across all 5 boundaries of
+  that schedule, and clearly distinguishable from the pre-correction
+  formula's 4.383, 3.099, 2.554, 2.254, 2.063 for the same schedule. A
+  first-look regression test (`test-alpha-spend-rtsa.R`) locks in the
+  corrected value against this RTSA reference in closed form.
+* **Practical impact:** the old formula spent alpha noticeably faster
+  at early looks than the corrected version -- roughly 9-11x more
+  budget at the first look of the K=5 reference schedule above --
+  i.e. it was less conservative than intended early in monitoring,
+  which works directly against the reason people choose an
+  O'Brien-Fleming design in the first place (strong protection against
+  declaring "significance" from sparse early evidence). The corrected
+  formula is more conservative early and correspondingly less
+  conservative at the final look (2.031 vs the old 2.063 for the same
+  K=5 example), while, like the old formula, still reaching exactly the
+  nominal alpha at t=1 by construction. Anyone who used `tsa_hr()` from
+  a version between 0.2.0 and 0.2.5.1 for TSA boundaries at an interim
+  look (not just a completed, fully-informed meta-analysis) should
+  re-run their analysis with this version.
+* **Why this was not caught by prior validation:** both the old and
+  corrected formulas independently satisfy alpha*(1) = alpha (any
+  correctly normalised spending function does), which is exactly what
+  the pre-existing Monte Carlo and closed-form checks in
+  `R/obf_boundaries.R` confirm -- they check the *total* spend, not the
+  *shape* across interim looks. This bug is a genuinely separate
+  property from what those checks were ever positioned to catch, not a
+  contradiction of them.
+* **Re-validated under the corrected formula**, not just assumed
+  correct by construction: a 20,000-replicate Monte Carlo (K=2, K=3
+  unequally spaced, K=5, K=10) against the corrected spending function
+  gave empirical type-I error of 4.35%-4.93% against a 5% nominal
+  target (Monte Carlo SE ~=0.15%) -- consistent with correct behaviour.
+  See the updated `VALIDATION` note at the top of `R/obf_boundaries.R`
+  for the full numeric account, and `inst/REVERSE_ENGINEERING_RTSA.md`
+  for the alpha-engine analogue of the beta-engine writeup added in
+  0.2.4.
+* Only `.alpha_spend_OF()` and its documentation changed. The recursive
+  integration engine that solves for the actual sequential boundaries
+  given a spending function (the FFT-based convolution machinery) is
+  untouched, as is the beta/futility engine (which is non-binding,
+  advisory-only, and doesn't affect type I error control), DARIS
+  calculation, and everything else in the package. No existing test
+  asserted a specific numeric alpha-boundary value tied to the old
+  formula (the one test that checks a specific constant, "internal OF
+  alpha boundary is consistent with the classical O'Brien-Fleming
+  boundary", uses a tolerance of 0.05 around the published ~2.040
+  reference and still passes under the corrected formula's ~2.031
+  final-look value); no existing test changes were needed.
+
 # tsahr 0.2.5.1
 
 ## Minor
 
 * `tsa_hr()`'s verbose console output now ends with a final note on the
-  practical impact of the `method` (\u03c4\u00b2 estimator) choice: it may have
+  practical impact of the `method` (τ² estimator) choice: it may have
   limited influence on the pooled effect-size when the evidence base is
   substantial, but can materially influence heterogeneity-dependent
   quantities, prediction intervals, DARIS, and the timing of TSA

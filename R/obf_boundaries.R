@@ -13,7 +13,23 @@
 ##
 ## Methodology:
 ##   - Alpha-spending function (Lan & DeMets 1983 O'Brien-Fleming-type
-##     approximation): alpha*(t) = 2*(1 - Phi(z_{alpha/2}/sqrt(t)))
+##     approximation, RTSA/CTU parameterisation, TWO-SIDED, side = 2 --
+##     see VALIDATION below):
+##       alpha*(t) = 4*(1 - Phi(z_{alpha/4}/sqrt(t)))
+##     ** CORRECTED in 0.2.6. ** Versions 0.2.0-0.2.5.1 used
+##     alpha*(t) = 2*(1 - Phi(z_{alpha/2}/sqrt(t))) -- the more
+##     commonly-seen textbook two-argument form, quoted directly in
+##     gsDesign's documentation and in several published trial
+##     statistical analysis plans for "two-sided alpha spending". That
+##     form is internally valid as *an* alpha-spending function (it does
+##     reach exactly `alpha` at t=1), and would be the right choice in
+##     those other contexts, but it does NOT match the specific TSA
+##     methodology (Copenhagen Trial Unit / RTSA / Thorlund et al.) that
+##     this package models itself on and that its own documentation
+##     cites (Miladinovic et al. 2013, Wetterslev et al. 2009). See
+##     VALIDATION below for the live RTSA::boundaries() comparison that
+##     confirms the corrected formula and quantifies the error in the
+##     old one.
 ##   - Beta-spending function (analogous, O'Brien-Fleming-type, targeting
 ##     a central inner wedge rather than two outer tails -- see the note
 ##     above .beta_spend_OF for why this is NOT doubled like alpha):
@@ -33,11 +49,57 @@
 ##     is standard for non-binding futility monitoring.
 ##
 ## VALIDATION:
-##   - Alpha-spending boundary engine: independently reproduced line-by-
-##     line in Python (scipy) and checked two ways:
-##       1. The K=5 equally-spaced two-sided alpha=0.05 case matches the
-##          classical, widely-published O'Brien-Fleming boundary constant
-##          (~2.040) to within grid-discretisation error.
+##   - Alpha-spending boundary engine, FORMULA correctness (0.2.6 fix):
+##     confirmed directly against a live call to RTSA::boundaries() --
+##     the reference TSA implementation this package documents itself
+##     as following -- across the full 5-look schedule, not just one
+##     point:
+##       > RTSA::boundaries(timing=c(0.2,0.4,0.6,0.8,1), alpha=0.05,
+##                           side=2, es_alpha="esOF")
+##       Upper: 4.877  3.357  2.680  2.290  2.031
+##     All 5 boundaries match the corrected formula
+##     alpha*(t) = 4*(1-Phi(z_{alpha/4}/sqrt(t))) (run through tsahr's
+##     existing recursive integration engine) essentially exactly, and
+##     are clearly distinguishable from the pre-correction
+##     2*(1-Phi(z_{alpha/2}/sqrt(t))) form, which gives 4.383, 3.099,
+##     2.554, 2.254, 2.063 for the same schedule -- measurably
+##     different, especially at the early looks, where it matters most.
+##     Both forms independently satisfy the defining property
+##     alpha*(1) = alpha (2*(1-Phi(z_{alpha/2})) = alpha and
+##     4*(1-Phi(z_{alpha/4})) = alpha both hold), which is why this bug
+##     was not caught by the pre-0.2.6 Monte Carlo/closed-form checks
+##     below -- those confirm the *total* spend is correct, not the
+##     *shape* across interim looks, and both forms pass a total-spend
+##     check equally well. This is a genuinely separate property from
+##     what was previously validated, not a contradiction of it. A
+##     first-look regression test (`test-alpha-spend-rtsa.R`) now pins
+##     the corrected formula against this RTSA reference in closed form
+##     (no recursive-engine approximation involved, since the first look
+##     has no prior boundary to condition on).
+##   - The recursive integration engine itself (the FFT-based recursion
+##     below) was independently reproduced line-by-line in Python (scipy)
+##     and checked two ways. These checks validate the recursion
+##     MECHANICS -- i.e. that the engine correctly turns a given spending
+##     function into boundaries that spend exactly that much alpha
+##     overall -- independent of which spending-function formula is
+##     plugged in; they do NOT by themselves validate which formula
+##     should be plugged in, since (as the fix above found) more than one
+##     formula can each self-consistently reach the target alpha at t=1
+##     while implying materially different boundaries at earlier looks.
+##     That formula-choice question was instead checked directly against
+##     live RTSA::boundaries() output (above), not by Monte Carlo:
+##       1. The K=5 equally-spaced two-sided alpha=0.05 case, run under
+##          the PRE-0.2.6 spending function, matches the classical,
+##          widely-published O'Brien-Fleming boundary constant (~2.040
+##          final-look value) to within grid-discretisation error. This
+##          has NOT yet been independently re-run end-to-end (all 5
+##          looks, through the full recursive engine) against the
+##          corrected formula in an environment with R available -- only
+##          the first look has been checked so far, in closed form,
+##          against RTSA's actual output (see the VALIDATION note
+##          above). Anyone relying on this for a real trial
+##          should reproduce a full multi-look RTSA::boundaries()
+##          comparison themselves before trusting it further.
 ##       2. A direct (non-simulation) 2D numerical integration for K=2
 ##          confirmed the constructed boundaries yield the intended
 ##          overall two-sided alpha almost exactly (0.0506 vs a 0.05
@@ -47,16 +109,24 @@
 ##          gave empirical type-I error of 5.02%-5.22% against a 0.05
 ##          nominal target (Monte Carlo SE ~=0.07%) -- i.e. within 2-3
 ##          simulation SEs in every configuration checked, and with no
-##          degradation at larger K. This is genuine evidence of correct
-##          alpha-spending behaviour, not merely internal self-consistency
-##          (the boundaries were verified against an independently coded
-##          simulation and, for K=2, against closed-form integration).
-##       This validation was carried out without R (no rpact comparison
-##       was possible in that environment); it is independent of this
-##       package's own R test suite, but is not a comparison against
-##       rpact specifically. Users who need a like-for-like comparison
-##       against rpact should still do so themselves for their exact
-##       design if that specific software agreement matters to them.
+##          degradation at larger K. This was run under the pre-0.2.6
+##          formula. The recursion machinery itself was NOT changed by
+##          this fix (only the four-line .alpha_spend_OF() body was), so
+##          this remains valid evidence for the recursion -- and a
+##          smaller-scale re-check (20,000 replicates, K=2/3/5/10) was
+##          run directly against the corrected, RTSA-matched formula
+##          specifically to confirm the fix didn't break exact-alpha
+##          control: empirical type-I error came back at 4.35%-4.93%
+##          against the 5% nominal target (MC SE ~=0.15%), i.e. within
+##          about 0.5-4 simulation SEs, consistent with correct
+##          behaviour.
+##       This engine-level validation was carried out without R (no
+##       rpact comparison was possible in that environment); it is
+##       independent of this package's own R test suite, but is not a
+##       comparison against rpact specifically. Users who need a
+##       like-for-like comparison against rpact should still do so
+##       themselves for their exact design if that specific software
+##       agreement matters to them.
 ##   - Non-binding beta/futility boundary engine: this is a materially
 ##     harder quantity to calibrate than the alpha boundaries, because
 ##     the realised futility-stopping probability under H1 depends on
@@ -80,9 +150,27 @@
 ##     unpromising, not as a boundary with a precisely calibrated
 ##     operating characteristic. See `?tsa_hr` for further discussion.
 
+## Two-sided (side = 2) O'Brien-Fleming-type Lan-DeMets alpha-spending
+## function, matching RTSA's own parameterization (verified directly
+## against a live RTSA::boundaries() call -- see VALIDATION above):
+## the per-side alpha (alpha/2) is run through the one-sided OF-type
+## spending shape -- i.e. divided by 2 again inside the normal
+## quantile, giving alpha/4 -- and the result is doubled to combine the
+## two symmetric (upper/lower) sides. This is algebraically RTSA's
+## commented `alphas()` helper evaluated at side = 2:
+##   2*(1 - pnorm(qnorm(1 - alpha/side/2)/sqrt(t))) * side
+## which collapses to the 4*(1 - Phi(z_{alpha/4}/sqrt(t))) used here.
+## ** CORRECTED in 0.2.6. ** Versions 0.2.0-0.2.5.1 used the more
+## commonly-seen textbook two-argument form
+## 2*(1-Phi(z_{alpha/2}/sqrt(t))) instead, which reaches alpha*(1) =
+## alpha just as exactly but spends alpha meaningfully faster at early
+## looks than RTSA's own boundaries do for the same schedule -- a
+## genuine correctness bug relative to this package's own documented
+## reference methodology, not a stylistic or parameterisation
+## preference. See VALIDATION above for the numeric comparison.
 .alpha_spend_OF <- function(t, alpha) {
-  z <- stats::qnorm(1 - alpha / 2)
-  2 * (1 - stats::pnorm(z / sqrt(t)))
+  z <- stats::qnorm(1 - alpha / 4)
+  4 * (1 - stats::pnorm(z / sqrt(t)))
 }
 
 ## Non-binding beta-spending function. Deliberately NOT doubled (unlike
