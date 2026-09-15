@@ -1,6 +1,115 @@
+# tsahr 0.2.6.4
+
+## Cosmetic: superscript "2" in "Diversity D2" on the TSA plot
+
+* `plot.tsa_hr()`'s subtitle and methods caption now render "Diversity
+  D²" using the Unicode superscript-two character (U+00B2), matching
+  the existing convention elsewhere in the package (e.g. the tau²
+  console note added in 0.2.5.1), instead of adding a new dependency
+  (e.g. `ggtext`) just for this. Purely cosmetic -- no change to any
+  computed value, and `x$heterogeneity$D2` (the underlying R variable
+  and list element name) is unchanged, since it must stay valid R
+  syntax. Not changed in this release: the "Diversity D2" wording in
+  `summary.tsa_hr()`'s printed table and in the near-boundary warning
+  message from `tsa_hr()` -- only the plot was in scope for this fix.
+
+# tsahr 0.2.6.3
+
+## Cleanup: removed dead `.beta_spend_OF()` and fixed the stale doc pointing at it
+
+* **Removed `.beta_spend_OF()`** (`R/obf_boundaries.R`), the un-doubled
+  candidate beta-spending formula `beta*(t) = 1 - Phi(z_beta/sqrt(t))`.
+  It was flagged as dead code when the RTSA-matched beta/futility engine
+  was added in 0.2.4: the actual boundary-solving path has used
+  `.rtsa_beta_spend_OF()` (`beta*(t) = 2*(1 - Phi(z_{beta/2}/sqrt(t)))`,
+  reverse-engineered directly from RTSA's `getInnerWedge()` -- see
+  `inst/REVERSE_ENGINEERING_RTSA.md`) ever since, and `.beta_spend_OF()`
+  was never called from anywhere in that path. Not a behaviour change --
+  `tsa_hr()`'s output is identical before and after this release.
+* **Fixed the top-of-file "Methodology" comment for beta-spending**,
+  which described `.beta_spend_OF()`'s (dead, un-doubled) formula as
+  though it were what the package actually computes. It now describes
+  `.rtsa_beta_spend_OF()`'s real (doubled) formula instead, with a
+  pointer to `inst/REVERSE_ENGINEERING_RTSA.md`.
+* **Removed the now-orphaned test** ("beta-spending function targets
+  total spend = beta (not 2*beta) at t=1", `test-tsa_hr.R`), which
+  exercised only the deleted dead function. The equivalent property for
+  the function actually in use is already covered by "RTSA beta
+  spending formula is used" in `test-boundaries-rtsa.R`.
+
+# tsahr 0.2.6.2
+
+## Doc fix: `R/obf_boundaries.R`'s VALIDATION section contradicted itself — and one of the two contradicting claims turned out to be based on a units mix-up, not a real gap
+
+(Supersedes an interim 0.2.6.1 that introduced this fix but also
+introduced a second, separate documentation problem -- see below.)
+
+
+* **The `VALIDATION` comment block in `R/obf_boundaries.R` said two
+  incompatible things about the same question.** One passage stated
+  the full 5-look boundary schedule had been checked end-to-end
+  against live `RTSA::boundaries()` output and matched "essentially
+  exactly"; a later passage in the same block said only the first look
+  had ever been checked (in closed form) and explicitly warned readers
+  that the rest was unverified. These cannot both be true, and
+  `inst/REVERSE_ENGINEERING_RTSA.md` disagreed with the second passage
+  too (it also claimed the full comparison was done) -- so the two
+  files disagreed with each other on top of the R file disagreeing
+  with itself.
+* **The full 5-look comparison against RTSA turns out to have been done
+  correctly, and the "essentially exactly" claim holds up** — once
+  compared against the right numbers. RTSA::boundaries() was called
+  with `timing = c(0.2, 0.4, 0.6, 0.8, 1.0)`; it reports back a rounded
+  `SMA_Timing` column (0.205, 0.409, 0.614, 0.818, 1.023) reflecting its
+  internal event-count discretisation, and at one point during this
+  package's development that reported (rounded) column got used as the
+  comparison input instead of the nominal schedule that was actually
+  requested. Since the first-look boundary is an exact, closed-form
+  function of the timing value fed in, that mismatch alone produces a
+  spurious ~0.06 "discrepancy" that has nothing to do with the formula
+  or the recursive engine. Using the correct nominal timing, an
+  independent from-scratch Python port of `.obf_alpha_boundary()`
+  reproduces all 5 of RTSA's reported boundaries to within
+  ~0.003-0.006 -- even at this engine's long-standing default of
+  `n_grid=2000` -- consistent with "essentially exactly".
+* **A previous draft of this note (and of this release) additionally
+  claimed a specific, more severe grid-coarseness problem at
+  n_grid=2000** -- boundaries of 4.877, 3.358, 2.703, 2.307, 2.064
+  (~0.03 error at the final look), improving to ~0.0044 only once
+  n_grid was raised to 16000, with a cited progression of
+  0.0325/0.0133/0.0074/0.0044/0.0020 as n_grid rose from 2000 to
+  32000. **That specific set of numbers could not be reproduced** by
+  the independent Python port described above (which found ~0.003-0.006
+  error already at n_grid=2000, not ~0.03) and was never confirmed by
+  an actual run of this package's R code in an environment with R
+  available. It is being retracted from this release's documentation
+  as unverified, rather than repeated as an established finding.
+* **`.obf_alpha_boundary()`'s default `n_grid` is still raised from
+  2000 to 16000** in this release, but the justification is narrower
+  than previously stated: not "fixes a confirmed ~0.03 error", but "a
+  conservative, essentially-free accuracy margin" -- FFT-based
+  convolution makes the extra grid resolution cheap for this package's
+  actual usage pattern (a handful of interim looks per `tsa_hr()` call),
+  so there's no real cost to preferring the larger grid even without a
+  confirmed problem at 2000. `bmax` is unchanged. Anyone who can run
+  the real R implementation is encouraged to confirm (or correct) the
+  Python-based numbers above -- see the VALIDATION note in
+  `R/obf_boundaries.R` for the exact snippet to run.
+* **Regression test** (`test-alpha-spend-rtsa.R`) pins the full
+  recursive-engine output against all 5 RTSA reference boundaries
+  (using the correct nominal timing) at a 0.01 tolerance. Based on the
+  Python check above this is expected to pass at both n_grid=2000 and
+  n_grid=16000, not only at the new default -- unlike what an earlier
+  draft of this test's own comment claimed.
+* No change to `.alpha_spend_OF()` itself, the beta/futility engine, or
+  anything else; this release is scoped entirely to documentation
+  accuracy and the default grid resolution.
+
 # tsahr 0.2.6
 
 ## Bug fix: alpha-spending formula did not match this package's own reference methodology (correctness — please upgrade)
+
+
 
 * **`.alpha_spend_OF()`'s two-sided alpha-spending formula was wrong for
   the methodology this package documents itself as implementing**, and

@@ -190,18 +190,6 @@ test_that("alpha-boundary engine controls type-I error at nominal level (Monte C
   }
 })
 
-test_that("beta-spending function targets total spend = beta (not 2*beta) at t=1", {
-  ## .beta_spend_OF is deliberately NOT doubled like .alpha_spend_OF (see
-  ## comment in R/obf_boundaries.R): the non-binding futility construction
-  ## targets a single central "inner wedge", not two symmetric outer
-  ## tails, so the cumulative nominal spend at t=1 should equal beta
-  ## itself, matching the nominal type-II-error/power budget used
-  ## elsewhere in the package's calculations.
-  for (beta in c(0.1, 0.2, 0.3)) {
-    expect_equal(tsahr:::.beta_spend_OF(1, beta), beta, tolerance = 1e-8)
-  }
-})
-
 test_that("alpha boundaries behave sensibly across K and information schedules", {
   configs <- list(
     K2  = c(0.5, 1),

@@ -220,7 +220,7 @@ plot.tsa_hr <- function(x, legend = TRUE, caption = TRUE,
     ggplot2::labs(
       title = "Trial Sequential Analysis of Hazard Ratios",
       subtitle = sprintf(
-        "Random-effects model | Diversity D2 = %.0f%% | Anticipated HR = %.2f | psi = %.3f | alpha=%.0f%%, power=%.0f%%",
+        "Random-effects model | Diversity D\u00b2 = %.0f%% | Anticipated HR = %.2f | psi = %.3f | alpha=%.0f%%, power=%.0f%%",
         D2 * 100, HR_anticipated, allocation_p_used, alpha_two_sided * 100, power * 100),
       x = "Cumulative number of events",
       y = "Cumulative Z-score"
@@ -272,7 +272,7 @@ plot.tsa_hr <- function(x, legend = TRUE, caption = TRUE,
       paste0("Methods: Random-effects (%s) model, allocation psi = %.3f\n",
              "Alpha spending: O'Brien-Fleming-type (asOF); ",
              "Non-binding futility: approximate O'Brien-Fleming-type beta-spending (bsOF)\n",
-             "alpha = %.0f%% (two-sided), power = %.0f%% | Diversity D2 = %.0f%%, Adjustment factor = %.2f"),
+             "alpha = %.0f%% (two-sided), power = %.0f%% | Diversity D\u00b2 = %.0f%%, Adjustment factor = %.2f"),
       .tsahr_method_label(if (is.null(x$parameters$method)) "DL" else x$parameters$method),
       allocation_p_used, alpha_two_sided * 100, power * 100, D2 * 100, AF)
     p <- p + ggplot2::labs(caption = methods_caption) +

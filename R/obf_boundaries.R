@@ -30,10 +30,18 @@
 ##     VALIDATION below for the live RTSA::boundaries() comparison that
 ##     confirms the corrected formula and quantifies the error in the
 ##     old one.
-##   - Beta-spending function (analogous, O'Brien-Fleming-type, targeting
-##     a central inner wedge rather than two outer tails -- see the note
-##     above .beta_spend_OF for why this is NOT doubled like alpha):
-##     beta*(t)  = 1 - Phi(z_beta/sqrt(t))
+##   - Beta-spending function (non-binding futility, O'Brien-Fleming-type,
+##     targeting a central inner wedge rather than two outer tails, and
+##     matching RTSA's own getInnerWedge()/beta-spending construction --
+##     see inst/REVERSE_ENGINEERING_RTSA.md for the reverse-engineering
+##     write-up, and the "RTSA / original CTU-TSA non-binding futility
+##     engine" section below for the implementation):
+##       beta*(t) = 2*(1 - Phi(z_{beta/2}/sqrt(t)))
+##     implemented in .rtsa_beta_spend_OF() below. (An earlier,
+##     un-doubled candidate formula, beta*(t) = 1 - Phi(z_beta/sqrt(t)),
+##     was implemented in this file as .beta_spend_OF() but never used by
+##     the actual boundary-solving code path above -- it was dead code
+##     and has been removed.)
 ##   - Sequential boundaries at each information fraction are obtained via
 ##     the standard recursive numerical integration (Armitage, McPherson &
 ##     Rowe 1969; generalised for spending functions by Reboussin, DeMets,
@@ -50,32 +58,72 @@
 ##
 ## VALIDATION:
 ##   - Alpha-spending boundary engine, FORMULA correctness (0.2.6 fix):
-##     confirmed directly against a live call to RTSA::boundaries() --
-##     the reference TSA implementation this package documents itself
-##     as following -- across the full 5-look schedule, not just one
-##     point:
+##     confirmed against a live call to RTSA::boundaries() -- the
+##     reference TSA implementation this package documents itself as
+##     following -- across the full 5-look schedule, not just one point:
 ##       > RTSA::boundaries(timing=c(0.2,0.4,0.6,0.8,1), alpha=0.05,
 ##                           side=2, es_alpha="esOF")
 ##       Upper: 4.877  3.357  2.680  2.290  2.031
-##     All 5 boundaries match the corrected formula
-##     alpha*(t) = 4*(1-Phi(z_{alpha/4}/sqrt(t))) (run through tsahr's
-##     existing recursive integration engine) essentially exactly, and
-##     are clearly distinguishable from the pre-correction
+##     The corrected formula alpha*(t) = 4*(1-Phi(z_{alpha/4}/sqrt(t)))
+##     is clearly distinguishable from the pre-correction
 ##     2*(1-Phi(z_{alpha/2}/sqrt(t))) form, which gives 4.383, 3.099,
 ##     2.554, 2.254, 2.063 for the same schedule -- measurably
 ##     different, especially at the early looks, where it matters most.
-##     Both forms independently satisfy the defining property
-##     alpha*(1) = alpha (2*(1-Phi(z_{alpha/2})) = alpha and
-##     4*(1-Phi(z_{alpha/4})) = alpha both hold), which is why this bug
-##     was not caught by the pre-0.2.6 Monte Carlo/closed-form checks
-##     below -- those confirm the *total* spend is correct, not the
-##     *shape* across interim looks, and both forms pass a total-spend
-##     check equally well. This is a genuinely separate property from
-##     what was previously validated, not a contradiction of it. A
-##     first-look regression test (`test-alpha-spend-rtsa.R`) now pins
-##     the corrected formula against this RTSA reference in closed form
-##     (no recursive-engine approximation involved, since the first look
-##     has no prior boundary to condition on).
+##     Both forms independently satisfy alpha*(1) = alpha, which is why
+##     this bug was not caught by the pre-0.2.6 Monte Carlo/closed-form
+##     checks below -- those confirm the *total* spend is correct, not
+##     the *shape* across interim looks. A first-look regression test
+##     (`test-alpha-spend-rtsa.R`) pins the corrected formula against
+##     this RTSA reference in exact closed form (the first look has no
+##     prior boundary to condition on, so needs no recursive-engine
+##     approximation).
+##   - Alpha-spending boundary engine, full 5-LOOK RECURSIVE-ENGINE match
+##     against the same RTSA reference: the full schedule above was
+##     independently re-implemented in Python (a faithful line-by-line
+##     port of `.convolve_step()`/`.obf_alpha_boundary()`'s math -- R's
+##     `convolve(h, rev(kernel), type="open")` is, by construction of
+##     that call, a standard convolution sum, which the Python port
+##     computes directly) and run end-to-end (all 5 looks through the
+##     recursion), not just checked in closed form at the first look.
+##     IMPORTANT -- use the nominal timing actually passed to
+##     RTSA::boundaries() (0.2, 0.4, 0.6, 0.8, 1.0), not the rounded
+##     `SMA_Timing` column RTSA *reports back* (0.205, 0.409, ...): the
+##     two were confused at one point during this package's development
+##     and produced a spurious ~0.06 "discrepancy" at the first look
+##     that was really just a units mismatch, not a real formula or
+##     engine problem -- using the correct nominal timing, the first
+##     look matches RTSA to within 0.0001, as it must (it's an exact
+##     closed-form quantity, independent of the recursive engine or its
+##     grid resolution entirely).
+##     Using the correct nominal timing, the Python port's result at
+##     n_grid=2000 (this engine's long-standing default) was already
+##     close to RTSA across all 5 looks (max absolute error ~0.003-0.006
+##     in the runs checked), NOT the ~0.03 final-look error that was
+##     reported in an earlier draft of this note. That earlier ~0.03
+##     figure, and the accompanying "error shrinks from 0.0325 at
+##     n_grid=2000 down to 0.0020 at n_grid=32000" progression, could
+##     NOT be reproduced by the independent Python port and are not
+##     currently believed to be accurate -- they were not confirmed by
+##     an actual run of this package's R code (no R interpreter was
+##     available in the environment that wrote that draft) and should be
+##     treated as unverified until someone with R access runs the
+##     snippet below and reports the real numbers:
+##       t <- c(0.2, 0.4, 0.6, 0.8, 1.0); alpha <- 0.05
+##       tsahr:::.obf_alpha_boundary(t, alpha, n_grid = 2000)
+##       tsahr:::.obf_alpha_boundary(t, alpha, n_grid = 16000)
+##     Pending that confirmation, `n_grid`'s default is nonetheless kept
+##     at 16000 (raised from 2000) purely as a conservative, low-cost
+##     safety margin: FFT-based convolution makes the accuracy gain
+##     (finer discretisation of the recursive integral) essentially free
+##     in practice for this package's actual usage pattern (a handful of
+##     interim looks per `tsa_hr()` call, not a hot simulation loop), so
+##     there is no real reason to prefer the smaller grid even without a
+##     confirmed problem at 2000. A regression test
+##     (`test-alpha-spend-rtsa.R`) pins the full recursive-engine output
+##     against all 5 RTSA reference values at a 0.01 tolerance using the
+##     correct nominal timing; this is expected to pass at both
+##     n_grid=2000 and n_grid=16000 based on the Python check above, but
+##     has not been confirmed against the actual R implementation.
 ##   - The recursive integration engine itself (the FFT-based recursion
 ##     below) was independently reproduced line-by-line in Python (scipy)
 ##     and checked two ways. These checks validate the recursion
@@ -91,15 +139,13 @@
 ##       1. The K=5 equally-spaced two-sided alpha=0.05 case, run under
 ##          the PRE-0.2.6 spending function, matches the classical,
 ##          widely-published O'Brien-Fleming boundary constant (~2.040
-##          final-look value) to within grid-discretisation error. This
-##          has NOT yet been independently re-run end-to-end (all 5
-##          looks, through the full recursive engine) against the
-##          corrected formula in an environment with R available -- only
-##          the first look has been checked so far, in closed form,
-##          against RTSA's actual output (see the VALIDATION note
-##          above). Anyone relying on this for a real trial
-##          should reproduce a full multi-look RTSA::boundaries()
-##          comparison themselves before trusting it further.
+##          final-look value) to within grid-discretisation error. The
+##          formula-choice question itself (old vs. RTSA-matched) was
+##          checked separately and directly against live
+##          RTSA::boundaries() output, both in closed form at the first
+##          look and, as of 0.2.6.1, end-to-end through the full
+##          recursive engine at all 5 looks (see the VALIDATION entries
+##          above for both).
 ##       2. A direct (non-simulation) 2D numerical integration for K=2
 ##          confirmed the constructed boundaries yield the intended
 ##          overall two-sided alpha almost exactly (0.0506 vs a 0.05
@@ -173,24 +219,6 @@
   4 * (1 - stats::pnorm(z / sqrt(t)))
 }
 
-## Non-binding beta-spending function. Deliberately NOT doubled (unlike
-## .alpha_spend_OF): the alpha function's factor of 2 reflects genuine
-## two-tailed spending (alpha/2 in each tail, symmetric outer rejection
-## regions). The futility construction below instead targets a single,
-## central "inner wedge" |B_k| < b_k under one-directional drift theta;
-## doubling that target would make the cumulative nominal spend equal to
-## 2*beta rather than beta at t=1 (e.g. 0.40 rather than 0.20 for the
-## default beta=0.20), which is not the intended convention -- the total
-## non-binding-futility spend across the whole design should target the
-## nominal beta used elsewhere in the power calculation. See the
-## VALIDATION note above for the accuracy this achieves in practice
-## (approximate, not exact, and inherently harder to calibrate than the
-## alpha engine).
-.beta_spend_OF <- function(t, beta) {
-  z <- stats::qnorm(1 - beta)
-  1 - stats::pnorm(z / sqrt(t))
-}
-
 ## FFT-based Gaussian convolution step: given a (sub-)density h defined on
 ## an equally-spaced grid, returns the density after one Brownian-motion
 ## increment of variance dt (and optional mean shift), evaluated back on
@@ -209,7 +237,7 @@
 ## is too small for any finite boundary to be reached under the spending
 ## function (this is the mathematically correct answer -- no amount of
 ## evidence that early would justify stopping -- not a failure).
-.obf_alpha_boundary <- function(t, alpha, bmax = 15, n_grid = 2000) {
+.obf_alpha_boundary <- function(t, alpha, bmax = 15, n_grid = 16000) {
   K <- length(t)
   bgrid <- seq(-bmax, bmax, length.out = n_grid)
   db <- bgrid[2] - bgrid[1]

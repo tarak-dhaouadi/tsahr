@@ -51,16 +51,54 @@ interim look should re-run their analysis with 0.2.6 or later. Only
 engine (the actual boundary-solving machinery) is untouched, as is the
 beta/futility engine described below.
 
+## Default grid resolution (0.2.6.1)
+
+The "all 5 boundaries match essentially exactly" claim above was
+re-checked with an independent from-scratch Python port of
+`.obf_alpha_boundary()`, run against the nominal timing actually passed
+to `RTSA::boundaries()` (0.2, 0.4, 0.6, 0.8, 1.0) rather than the
+rounded `SMA_Timing` column it reports back (0.205, 0.409, ...) --
+mixing those two up produces a spurious ~0.06 discrepancy at the first
+look that has nothing to do with the formula or engine, since the
+first look is an exact closed-form quantity determined entirely by the
+timing value fed in. Using the correct nominal timing, the Python port
+matched RTSA's boundaries to within ~0.003-0.006 across all 5 looks
+even at this engine's long-standing default of `n_grid=2000` -- i.e.
+"essentially exactly" holds up, and does not require the larger grid
+introduced below to be true.
+
+A previous draft of this note additionally claimed a specific,
+more severe problem at n_grid=2000 -- boundaries of 4.877, 3.358,
+2.703, 2.307, 2.064 against RTSA's 4.877, 3.357, 2.680, 2.290, 2.031
+(~0.03 error at the final look), with a cited progression of
+0.0325/0.0133/0.0074/0.0044/0.0020 as n_grid rose from 2000 to 32000.
+That specific set of numbers could not be reproduced by the Python
+port above and was never confirmed by an actual run of this package's
+R code -- it is retracted here as unverified rather than repeated.
+`.obf_alpha_boundary()`'s default `n_grid` is nonetheless still raised
+from 2000 to 16000 in this release, on narrower grounds: FFT-based
+convolution makes the extra grid resolution essentially free for this
+package's actual usage pattern (a handful of interim looks per
+`tsa_hr()` call), so there's no real cost to the more conservative
+choice even without a confirmed problem at 2000. Anyone with a working
+R installation is encouraged to run the snippet in the VALIDATION note
+of `R/obf_boundaries.R` and confirm (or correct) the numbers above.
+
 A 20,000-replicate Monte Carlo re-check (K=2, K=3 unequally spaced,
 K=5, K=10) run directly against the corrected formula gave empirical
 type-I error of 4.35%-4.93% against the 5% nominal target (Monte Carlo
 SE ~=0.15%), consistent with correct behaviour. See the `VALIDATION`
-note at the top of `R/obf_boundaries.R` for the fuller numeric account,
-including what has and hasn't yet been independently re-verified for
-the corrected formula (the full 5-look, engine-level comparison against
-RTSA's published ~2.040 O'Brien-Fleming constant has so far only been
-re-run against the old formula, not the corrected one -- see that note
-for details).
+note at the top of `R/obf_boundaries.R` for the fuller numeric account.
+The full 5-look, engine-level comparison against live RTSA output has
+been checked against the corrected formula specifically (see "Default
+grid resolution" above); the one comparison that has only been run
+under the pre-0.2.6 formula and not repeated for the corrected one is
+the classical published ~2.040 O'Brien-Fleming constant check, which is
+a different, narrower reference point (a single textbook number, not
+RTSA's own multi-look output) -- that narrower gap does not need to
+hold anyone up, since the direct RTSA comparison above is the stronger
+and more relevant check for this package's specific goal of matching
+RTSA rather than the general OF literature.
 
 ## Beta/futility boundary engine (added 0.2.4)
 

@@ -50,3 +50,37 @@ test_that("alpha-spending formula is the side=2 (two-sided) OF-type form", {
   )
   expect_equal(got, expected, tolerance = 1e-14)
 })
+
+## The checks above pin the spending FORMULA, but a coarse default grid
+## in the recursive engine could in principle still reproduce a
+## formula-correct-but-numerically-off set of boundaries. This test pins
+## the full recursive ENGINE output against all 5 RTSA reference values
+## directly (using the nominal timing actually passed to
+## RTSA::boundaries(), not its rounded reported SMA_Timing column), so a
+## regression to a coarser grid or any other engine-level numerical
+## issue would be caught here even though the formula-only checks above
+## would still pass. NOTE: an earlier draft of this file's comments (and
+## of the VALIDATION note in R/obf_boundaries.R) claimed the
+## then-default n_grid=2000 produced ~0.03 error at the final look,
+## specifically. That specific figure could not be reproduced by an
+## independent from-scratch Python port of this exact algorithm (which
+## instead got ~0.003-0.006 max error at n_grid=2000 using the correct
+## nominal timing) and was never confirmed by an actual run of this R
+## code -- treat it as unverified rather than as an established
+## regression case. n_grid's default is kept at 16000 regardless, as a
+## conservative, low-cost accuracy margin rather than a fix for a
+## confirmed problem at 2000.
+test_that("full recursive alpha boundary engine matches RTSA::boundaries() at all 5 looks", {
+  t <- c(0.2, 0.4, 0.6, 0.8, 1.0)
+  alpha <- 0.05
+
+  got <- tsahr:::.obf_alpha_boundary(t, alpha)
+  rtsa_reported <- c(4.877, 3.357, 2.680, 2.290, 2.031)
+
+  ## Tolerance reflects RTSA's own 3-decimal reporting precision, not an
+  ## exact bit-for-bit target. Based on an independent Python port of
+  ## this algorithm this is expected to pass even at the old
+  ## n_grid=2000 default, not just at the current 16000 -- see the note
+  ## above and the VALIDATION note in R/obf_boundaries.R.
+  expect_equal(got, rtsa_reported, tolerance = 0.01)
+})

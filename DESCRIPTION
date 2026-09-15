@@ -1,7 +1,7 @@
 Package: tsahr
 Type: Package
 Title: Trial Sequential Analysis for Meta-Analyses of Hazard Ratios
-Version: 0.2.6
+Version: 0.2.6.4
 Authors@R: person("Tarak", "Dhaouadi", email = "dhaouaditarak@yahoo.fr", role = c("aut", "cre"))
 Description: Performs Trial Sequential Analysis (TSA) for meta-analyses of
     time-to-event outcomes reported as hazard ratios. Implements the
@@ -29,4 +29,4 @@ BugReports: https://github.com/tarak-dhaouadi/tsahr/issues
 NeedsCompilation: no
 Author: Tarak Dhaouadi [aut, cre]
 Maintainer: Tarak Dhaouadi <dhaouaditarak@yahoo.fr>
-Packaged: 2026-09-14 00:00:00 UTC; tarak
+Packaged: 2026-09-15 06:55:18 UTC; tarak
