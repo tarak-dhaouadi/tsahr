@@ -69,9 +69,19 @@ function runs. Default \code{TRUE}.}
 An object of class \code{"tsa_hr"}: a list containing the fitted
 random-effects and fixed-effect \code{metafor::rma} model objects,
 heterogeneity statistics, allocation and required-information-size
-details, the cumulative analysis data frame, boundary-crossing results,
-and a summary data frame. Use \code{plot()}, \code{summary()}, or
-\code{print()} on the result.
+details, the cumulative analysis data frame (\code{cumulative}), the
+formal sequential boundary schedule including the synthetic \code{t=1}
+final-analysis point (\code{boundary_timeline}; see "Retrospective
+boundary timeline" below), boundary-crossing results (\code{results},
+including \code{crossed_conventional} -- deliberately evaluated over
+the FULL cumulative Z-curve, including studies added after DARIS,
+unlike \code{crossed_tsa}, which is restricted to the formal decision
+horizon -- and \code{entered_futility_region}, see the caveat under
+"Retrospective boundary timeline" below; a \code{TRUE} value at the
+DARIS-reaching look reflects a comparison against the definitive
+\code{t=1} futility boundary, not an interim one, and is not itself a
+formal stopping recommendation), and a summary data frame. Use
+\code{plot()}, \code{summary()}, or \code{print()} on the result.
 }
 \description{
 Performs a Trial Sequential Analysis (TSA) for a meta-analysis of
@@ -80,7 +90,7 @@ classical Wetterslev/Thorlund/CTU TSA framework to time-to-event data
 using the Schoenfeld required-events formula (generalised for unequal
 allocation), the Diversity (D-squared) heterogeneity adjustment of
 Wetterslev et al. (2009), and O'Brien-Fleming-type alpha- and
-beta-spending monitoring boundaries computed at the exact accrued
+beta-spending monitoring boundaries computed at the observed accrued
 statistical information.
 }
 \details{
@@ -101,20 +111,22 @@ distribution, which holds exactly only for a fixed-effect cumulative
 process. With random effects this is a widely-used approximation (as in
 the official Copenhagen Trial Unit TSA software), not an exact result.
 
-\strong{Looks after DARIS is reached:} once the observed accrued
-information first reaches DARIS at some look k, \code{info_fraction} is
-capped at 1 for every subsequent look, so they all map to the same
-(final, \code{t=1}) boundary value. Testing every one of those looks
-against that boundary would amount to several additional, uncounted
-tests against what the alpha-spending calculation treats as a single
-final analysis. The formal \code{crossed_tsa} and
-\code{entered_futility_region} verdicts are therefore evaluated only
-through the FIRST look at which DARIS was reached (recorded as
-\code{results$final_tsa_look}; equal to the total number of looks if
-DARIS was never reached). Any studies added after that look are still
-included in full in the returned cumulative data frame and in
-\code{plot()} -- only the formal sequential decision is restricted, not
-what is shown.
+\strong{Retrospective boundary timeline:} the observed cumulative
+Z-curve continues through every included study, but the formal alpha
+and beta boundaries follow the RTSA retrospective convention: observed
+looks are retained only while \code{info_fraction < 1}, followed by one
+synthetic final-analysis point at \code{t = 1} (HARIS/DARIS). Boundaries
+are not continued through studies occurring after DARIS. The synthetic
+point is stored in \code{boundary_timeline}; the observed-study rows in
+\code{cumulative} have boundary values set to \code{NA} at and after
+DARIS. Formal crossing/futility decisions are evaluated only through the
+first observed look reaching DARIS, using the definitive \code{t = 1}
+boundary. In particular, \code{results$entered_futility_region} at that
+look reflects a comparison against the FINAL futility boundary (which by
+the RTSA convention equals the same value as the final efficacy
+boundary), not an interim one -- a \code{TRUE} value there means the
+definitive analysis did not reach conventional significance, not that a
+formal interim futility stop was triggered.
 }
 \examples{
 \donttest{

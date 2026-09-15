@@ -117,6 +117,16 @@ write.csv(res$summary_table, "tsa_summary.csv",             row.names = FALSE)
   applying them to a random-effects Z-curve is a standard approximation
   (shared with the official Copenhagen Trial Unit TSA software), not an
   exact result.
+- **`method` only affects the effect-size model, not the design:** the
+  heterogeneity-variance (`tau^2`) estimator selected via `method`
+  affects `tau^2`, the random-effects cumulative Z-curve, and therefore
+  D-squared/DARIS-related quantities that depend on that curve -- but it
+  does **not** change the alpha-spending function or the TSA monitoring
+  boundaries themselves, which are a fixed part of the group-sequential
+  design chosen up front (`alpha_two_sided`, `power`). Switching, e.g.,
+  `method = "DL"` to `method = "REML"` changes how the pooled effect and
+  its cumulative curve are estimated; it does not change the design
+  you're monitoring against.
 
 ## References
 

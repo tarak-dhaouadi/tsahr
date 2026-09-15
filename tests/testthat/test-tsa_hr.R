@@ -38,6 +38,15 @@ test_that("invalid inputs are rejected", {
                        verbose = FALSE), "method must be one of")
   expect_error(tsa_hr(path, target_HR = 0.80, method = c("DL", "REML"),
                        verbose = FALSE), "method must be one of")
+  expect_error(tsa_hr(path, allocation_source = "manual",
+                       allocation_p = NA, verbose = FALSE),
+               "single finite numeric value")
+  expect_error(tsa_hr(path, allocation_source = "manual",
+                       allocation_p = c(0.5, 0.6), verbose = FALSE),
+               "single finite numeric value")
+  expect_error(tsa_hr(path, allocation_source = "manual",
+                       allocation_p = "0.5", verbose = FALSE),
+               "single finite numeric value")
 })
 
 test_that("method defaults to DL and accepts other metafor random-effects estimators", {

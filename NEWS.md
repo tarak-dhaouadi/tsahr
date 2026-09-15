@@ -1,3 +1,77 @@
+# tsahr 0.2.6.5
+
+## Input-validation fix, three real documentation bugs, and two judgment calls left as-is (documented, not silently resolved)
+
+Prompted by an external (ChatGPT) review; each item below was checked
+against the actual code before acting on it, not applied at face value
+-- see the per-item notes.
+
+* **`allocation_p` validation hardened.** `allocation_source = "manual"`
+  with `allocation_p = NA`, a length>1 vector, or a non-numeric value
+  previously could reach a generic/uninformative R error (e.g. "missing
+  value where TRUE/FALSE needed" for `NA`) instead of the package's own
+  informative message. Confirmed by direct testing before fixing, not
+  just taken on faith. Now validates `is.numeric()`, `length() == 1L`,
+  and `is.finite()` before the range check, with three new regression
+  tests (`NA`, `c(0.5, 0.6)`, `"0.5"`) added to `test-tsa_hr.R`.
+* **Fixed: stale `man/tsa_hr.Rd`, out of sync with `R/tsa_hr.R` in three
+  compounding ways.** The source's roxygen documentation had already
+  been updated in previous releases, but `man/tsa_hr.Rd` was never
+  regenerated to match, so it still said `info_fraction` "is capped at
+  1 for every subsequent look" (false -- only the boundary/decision
+  *mapping* is capped via `pmin(info_fracs, 1)`; the stored
+  `cumulative$info_fraction` itself is not, and can exceed 1, e.g.
+  1.0126, after DARIS) and "...computed at the **exact** accrued
+  statistical information" (the source had already been corrected to
+  "observed"). The Rd was also entirely missing the source's current
+  "Retrospective boundary timeline" paragraph (about `boundary_timeline`
+  and the synthetic `t=1` point), still showing an older, superseded
+  "Looks after DARIS is reached" paragraph instead. `man/tsa_hr.Rd` is
+  resynced to the current source. If you use roxygen2/devtools to
+  regenerate docs going forward, this class of drift won't recur; for
+  now the fix was done by hand since no R was available in this
+  session.
+* **`boundary_timeline` and the caveated components of `results` are
+  now documented in `@return`/`\value{}`** (both the roxygen source and
+  the Rd), including that `results$entered_futility_region == TRUE` at
+  the DARIS-reaching look reflects a comparison against the *definitive*
+  `t=1` futility boundary, not an interim one, and is not itself a
+  formal stopping recommendation -- that caveat previously existed only
+  in the printed/verbose console output, not in the object a caller
+  gets back programmatically.
+* **`crossed_conventional`'s full-cumulative-curve scope (as opposed to
+  `crossed_tsa`'s decision-horizon-restricted scope) is now an explicit,
+  documented design choice, not left ambiguous.** Checked directly:
+  yes, `crossed_conventional` uses the unrestricted `cumul_df$Z`
+  (including studies added after DARIS) while `crossed_tsa` is
+  restricted to `decision_idx` -- these do answer genuinely different
+  questions. Concluded this is intentional (the printed label already
+  says "Cumulative Z-curve crossed...", and contrasting it with the
+  properly-scoped `crossed_tsa` line illustrates exactly the
+  repeated-testing inflation risk TSA exists to guard against), so
+  **behaviour is unchanged** -- but this was a judgment call, not a
+  certainty, so it's now spelled out in both a code comment and
+  `?tsa_hr` rather than left for a future reader to guess at. If you
+  intended the decision-horizon-restricted reading instead, that's a
+  one-line change (see the code comment above `crossed_conventional`
+  for the exact replacement) -- flag it and it'll be made explicitly
+  rather than silently.
+* **`README.md`** now states explicitly that `method` (the
+  heterogeneity-variance estimator) affects `tau^2`, the random-effects
+  cumulative Z-curve, and D-squared/DARIS-related quantities, but does
+  **not** change the alpha-spending function or TSA monitoring
+  boundaries themselves.
+* **Not done, needs your input:** a concrete multi-look RTSA beta-
+  boundary regression test (paralleling the existing
+  `rtsa_reported <- c(4.877, 3.357, 2.680, 2.290, 2.031)` alpha test).
+  This needs an actual reference vector from a live
+  `RTSA::boundaries()` call with a beta-spending function, the same way
+  the alpha reference came from your own live RTSA session in 0.2.5.2 --
+  no R is available in this environment to run it, and I won't fabricate
+  reference numbers. Send the output of a call like
+  `RTSA::boundaries(timing=c(...), alpha=0.05, beta=0.20, side=2,
+  es_alpha="esOF", es_beta="esOF")` and this test gets added properly.
+
 # tsahr 0.2.6.4
 
 ## Cosmetic: superscript "2" in "Diversity D2" on the TSA plot

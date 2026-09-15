@@ -113,14 +113,29 @@
 #' \code{cumulative} have boundary values set to \code{NA} at and after
 #' DARIS. Formal crossing/futility decisions are evaluated only through the
 #' first observed look reaching DARIS, using the definitive \code{t = 1}
-#' boundary.
+#' boundary. In particular, \code{results$entered_futility_region} at that
+#' look reflects a comparison against the FINAL futility boundary (which by
+#' the RTSA convention equals the same value as the final efficacy
+#' boundary), not an interim one -- a \code{TRUE} value there means the
+#' definitive analysis did not reach conventional significance, not that a
+#' formal interim futility stop was triggered.
 #'
 #' @return An object of class \code{"tsa_hr"}: a list containing the fitted
 #'   random-effects and fixed-effect \code{metafor::rma} model objects,
 #'   heterogeneity statistics, allocation and required-information-size
-#'   details, the cumulative analysis data frame, boundary-crossing
-#'   results, and a summary data frame. Use \code{plot()},
-#'   \code{summary()}, or \code{print()} on the result.
+#'   details, the cumulative analysis data frame (\code{cumulative}), the
+#'   formal sequential boundary schedule including the synthetic \code{t=1}
+#'   final-analysis point (\code{boundary_timeline}; see "Retrospective
+#'   boundary timeline" above), boundary-crossing results (\code{results},
+#'   including \code{crossed_conventional} -- deliberately evaluated over
+#'   the FULL cumulative Z-curve, including studies added after DARIS,
+#'   unlike \code{crossed_tsa}, which is restricted to the formal decision
+#'   horizon -- and \code{entered_futility_region}, see the caveat under
+#'   "Retrospective boundary timeline" above; a \code{TRUE} value at the
+#'   DARIS-reaching look reflects a comparison against the definitive
+#'   \code{t=1} futility boundary, not an interim one, and is not itself a
+#'   formal stopping recommendation), and a summary data frame. Use
+#'   \code{plot()}, \code{summary()}, or \code{print()} on the result.
 #'
 #' @references
 #' Miladinovic B, Mhaskar R, Hozo I, Kumar A, Mahony H, Djulbegovic B.
@@ -261,8 +276,15 @@ tsa_hr <- function(data,
   if (!is.na(target_HR) && isTRUE(all.equal(target_HR, 1))) {
     stop("target_HR cannot equal 1: ln(HR)=0 makes the required information infinite.")
   }
-  if (allocation_source == "manual" && (allocation_p <= 0 || allocation_p >= 1)) {
-    stop("allocation_p must be strictly between 0 and 1.")
+  if (allocation_source == "manual") {
+    if (!is.numeric(allocation_p) ||
+        length(allocation_p) != 1L ||
+        !is.finite(allocation_p) ||
+        allocation_p <= 0 ||
+        allocation_p >= 1) {
+      stop("allocation_p must be a single finite numeric value strictly ",
+           "between 0 and 1.")
+    }
   }
 
   ## --- Count columns should be whole numbers ---------------------------
@@ -685,7 +707,33 @@ tsa_hr <- function(data,
 
   crossed_tsa <- any(abs(cumul_df$Z[decision_idx]) >= decision_boundary_upper,
                      na.rm = TRUE)
+  ## `crossed_conventional` is DELIBERATELY evaluated over the FULL
+  ## cumulative Z-curve (unlike crossed_tsa/entered_futility_region,
+  ## which are restricted to decision_idx). This is intentional: it
+  ## answers "did the naive, uncorrected cumulative P-value ever drop
+  ## below 0.05?", including at studies added after DARIS was reached,
+  ## as a deliberate contrast against the properly-scoped crossed_tsa --
+  ## illustrating exactly the repeated-testing inflation risk that TSA
+  ## exists to guard against. If you instead want "did the formal
+  ## sequential analysis reach conventional significance at/before the
+  ## DARIS decision look" (the same horizon as crossed_tsa), use
+  ## `any(abs(cumul_df$Z[decision_idx]) >= z_alpha, na.rm = TRUE)`
+  ## instead. Decide explicitly before changing this -- both readings
+  ## are defensible, but they answer different questions.
   crossed_conventional <- any(abs(cumul_df$Z) >= z_alpha)
+  ## `entered_futility_region` uses the same decision_idx / definitive
+  ## t=1-boundary comparison as crossed_tsa (see comment above
+  ## decision_idx). At the first DARIS-reaching look specifically, this
+  ## means comparing against the FINAL futility boundary (which by the
+  ## RTSA convention equals qnorm(1-alpha/2)), not an interim futility
+  ## boundary -- so entered_futility_region == TRUE at that look does
+  ## NOT mean "TSA recommends stopping for futility now"; the printed
+  ## summary label says "(not a formal stopping decision)" for exactly
+  ## this reason. That caveat lives only in the printed/summary text,
+  ## not in the boolean itself -- a caller reading
+  ## `results$entered_futility_region` programmatically (bypassing the
+  ## printed output) will not see it. See ?tsa_hr, "Value", for the
+  ## corresponding caveat in the documented return value.
   entered_futility_region <- any(abs(cumul_df$Z[decision_idx]) <= decision_futility_upper,
                                   na.rm = TRUE)
 
