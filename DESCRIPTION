@@ -19,7 +19,6 @@ Description: Performs Trial Sequential Analysis (TSA) for meta-analyses of
     <doi:10.1186/1471-2288-9-86>.
 License: MIT + file LICENSE
 Encoding: UTF-8
-RoxygenNote: 7.3.1
 Depends: R (>= 4.0.0)
 Imports: metafor, readxl, ggplot2, stats, utils
 Suggests: testthat (>= 3.0.0)
@@ -30,3 +29,4 @@ NeedsCompilation: no
 Author: Tarak Dhaouadi [aut, cre]
 Maintainer: Tarak Dhaouadi <dhaouaditarak@yahoo.fr>
 Packaged: 2026-09-15 11:15:44 UTC; tarak
+Config/roxygen2/version: 8.1.0

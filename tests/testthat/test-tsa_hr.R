@@ -37,7 +37,7 @@ test_that("invalid inputs are rejected", {
   expect_error(tsa_hr(path, target_HR = 0.80, method = "FE",
                        verbose = FALSE), "method must be one of")
   expect_error(tsa_hr(path, target_HR = 0.80, method = c("DL", "REML"),
-                       verbose = FALSE), "method must be one of")
+                       verbose = FALSE), "single character string")
   ## "CO" is not a recognised method string in current metafor at all
   ## (despite appearing as a documented alias for "HE" in some older/
   ## secondary sources) -- falls through to the generic invalid-method
