@@ -1,3 +1,121 @@
+# tsahr 0.2.6.6
+
+## Bug fix: 3 of 13 advertised `method` values never worked, plus a documentation correction and several audit-driven improvements
+
+Prompted by a second external (ChatGPT) audit of 0.2.6.5, verified against
+the actual code and against current metafor documentation before acting
+on any of it (see below for what was independently corroborated and how).
+
+### Bug fix (correctness): `method = "CO"`, `"GENQ"`, `"GENQM"` never worked
+
+* **`tsa_hr(method = ...)` has advertised 13 metafor method strings as
+  supported since the `method` parameter was first added, but 3 of them
+  never actually worked** -- this went unnoticed because only `"DL"`,
+  `"REML"`, and `"ML"` were ever exercised by the test suite. Found while
+  adding a test that runs every advertised method (itself prompted by
+  the audit's suggestion to test the full advertised set) -- independent
+  of anything the audit itself flagged.
+  - `"CO"` is not a recognised method string in current metafor at all
+    (verified directly against an installed metafor: it throws
+    `"Unknown 'method' specified"`, not a Hedges-estimator result).
+    It appears as a documented alias for `"HE"` in some older/secondary
+    sources, but is not accepted by `rma()` as currently shipped.
+    Independently corroborated: a search of metafor's own current
+    documentation and training materials turned up no mention of `"CO"`
+    in any enumerated method list.
+  - `"GENQ"` / `"GENQM"` require the caller to also supply a `weights`
+    argument to `metafor::rma()` (per metafor's own documentation, e.g.
+    `rma(yi, vi, weights = 1/vi, method = "GENQ")`), which `tsa_hr()`
+    does not currently collect or pass through, so calling it with
+    these methods and no weights errors out inside `rma()`.
+    Independently corroborated against metafor's own documentation and
+    Cochrane training materials.
+* **`valid_methods` corrected to the 10 that actually work standalone**:
+  `DL, HE, HS, HSk, SJ, ML, REML, EB, PM, PMM`. Passing `"GENQ"` or
+  `"GENQM"` now raises a specific, explanatory error (these ARE real
+  metafor method names, just not usable here without a feature this
+  package doesn't yet have, so the generic "method must be one of"
+  list would be misleading); passing `"CO"` or any other unsupported
+  string still gets the generic list.
+* Cleaned up the internal method-to-label helper (`.tsahr_method_label`)
+  to drop the now-invalid `"CO"` entry.
+* Updated `@param method` in `R/tsa_hr.R` and `man/tsa_hr.Rd` to list the
+  correct 10 methods and explain why the other 3 aren't supported.
+* **New test** (`"every advertised method value runs and returns a valid
+  object"`) exercises all 10 currently-supported methods on the bundled
+  example data, plus explicit tests that `"CO"`/`"GENQ"`/`"GENQM"` each
+  fail with the right error message -- so a similar gap can't recur
+  silently.
+* This is a genuine behavior change for anyone who was passing
+  `method = "CO"`, `"GENQ"`, or `"GENQM"`: those calls were already
+  failing before this release (with a less legible error from inside
+  `metafor::rma()`), so no one could have been relying on them
+  succeeding -- this release only makes the failure explicit and
+  immediate, with a clearer message.
+
+### Documentation fix: final futility boundary wording
+
+* **`R/tsa_hr.R` and `man/tsa_hr.Rd` incorrectly stated that the final
+  futility boundary "equals the same value as the final efficacy
+  boundary."** It doesn't, and the actual code never implied it should:
+  ```r
+  beta_final <- min(qnorm(1 - alpha_two_sided / 2), tail(alpha_bounds_design, 1))
+  ```
+  Since the sequentially-adjusted final efficacy boundary is virtually
+  always at or above the conventional `qnorm(1-alpha/2)` value, `min()`
+  almost always selects the conventional value instead -- confirmed
+  numerically on the bundled example data (2.0786 for the final
+  efficacy boundary vs. 1.959964 for the final futility boundary).
+  Practical consequence: for `1.96 < |Z| < 2.08` (using that example),
+  conventional p<.05 is YES, the TSA efficacy boundary is NO, and the
+  futility region is also NO -- a legitimate intermediate state the old
+  wording obscured. Wording corrected in both files to describe the
+  final futility boundary as "the conventional two-sided alpha critical
+  value at the definitive analysis," not as equal to the efficacy
+  boundary. New regression test
+  (`"final futility boundary is the conventional critical value, not
+  the final efficacy boundary"`, `test-daris-futility-stop.R`) pins
+  this numerically so it can't silently drift back.
+
+### Other fixes and improvements from the audit
+
+* **`D2_raw` and `D2_was_capped`** added to the returned `heterogeneity`
+  list, alongside the existing (possibly-capped) `D2` -- so a downstream
+  user can tell "D2 genuinely computed as 0.999" apart from "D2 was
+  capped here from something larger/degenerate" instead of the capping
+  being silent. Documented in `@return`/`\value{}`.
+* **`Study` identifiers are now validated** as non-missing and
+  non-empty (previously only checked for duplicates).
+* **`order_by` now warns on tied values** (previously only warned on
+  `NA`s and non-numeric/non-Date types) -- TSA is order-dependent, so
+  the relative order of tied studies can matter.
+* **`target_HR` very close to 1 (0.90-1.10, excluding exactly 1, which
+  is still a hard error) now triggers a warning, not silence** --
+  required information size grows rapidly as `log(target_HR)` -> 0
+  (e.g. `target_HR=0.95` needs roughly 4x the information of
+  `target_HR=0.90` for an otherwise identical design), so this is a
+  nudge to confirm the target is intentional, not a defect.
+* **Random-effects caveat reworded** in `R/tsa_hr.R` and `man/tsa_hr.Rd`
+  to the more precise framing: the canonical Lan-DeMets/O'Brien-Fleming
+  theory assumes a fixed, canonical information process with independent
+  Brownian-motion increments, and tsahr's random-effects (tau^2
+  re-estimated at every look) Z-process doesn't exactly satisfy that --
+  rather than the previous, slightly imprecise "holds exactly only for
+  a fixed-effect cumulative process."
+* **Plot methods caption reworded**: "Non-binding futility: RTSA
+  retrospective inner-wedge algorithm, O'Brien-Fleming-type
+  beta-spending (bsOF)" instead of "approximate O'Brien-Fleming-type
+  beta-spending (bsOF)" -- the engine is a specific, documented,
+  reverse-engineered RTSA algorithm (see
+  `inst/REVERSE_ENGINEERING_RTSA.md`), not a generic approximation.
+* **README's `method` section reworded** to the more precise framing:
+  `method` does not change the mathematical alpha-spending function or
+  boundary-calculation algorithm, but it DOES change `tau^2`, the
+  cumulative information schedule, and therefore which study lands on
+  which information fraction -- so it can still change the practical
+  timing of a boundary crossing indirectly, which the previous wording
+  understated.
+
 # tsahr 0.2.6.5
 
 ## Input-validation fix, three real documentation bugs, and two judgment calls left as-is (documented, not silently resolved)

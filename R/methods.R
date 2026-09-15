@@ -271,7 +271,8 @@ plot.tsa_hr <- function(x, legend = TRUE, caption = TRUE,
     methods_caption <- sprintf(
       paste0("Methods: Random-effects (%s) model, allocation psi = %.3f\n",
              "Alpha spending: O'Brien-Fleming-type (asOF); ",
-             "Non-binding futility: approximate O'Brien-Fleming-type beta-spending (bsOF)\n",
+             "Non-binding futility: RTSA retrospective inner-wedge algorithm, ",
+             "O'Brien-Fleming-type beta-spending (bsOF)\n",
              "alpha = %.0f%% (two-sided), power = %.0f%% | Diversity D\u00b2 = %.0f%%, Adjustment factor = %.2f"),
       .tsahr_method_label(if (is.null(x$parameters$method)) "DL" else x$parameters$method),
       allocation_p_used, alpha_two_sided * 100, power * 100, D2 * 100, AF)

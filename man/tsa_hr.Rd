@@ -45,15 +45,24 @@ cumulative (sequential) TSA model, passed straight through to
 (DerSimonian-Laird, the default -- kept as the default here for backward
 compatibility with earlier tsahr versions, which always used DL; note
 this differs from \code{metafor::rma()}'s own default of \code{"REML"}),
-\code{"HE"} (or its alias \code{"CO"}), \code{"HS"}, \code{"HSk"},
-\code{"SJ"}, \code{"ML"}, \code{"REML"}, \code{"EB"}, \code{"PM"},
-\code{"GENQ"}, \code{"PMM"}, or \code{"GENQM"}. See \code{?metafor::rma}
-for the definition of each estimator. This only changes the
-\emph{random-effects} model (\code{res_re}); the equal-effects model used
-internally for the Diversity (D^2) heterogeneity adjustment is always
-fitted with \code{method = "FE"} and is unaffected by this argument.
-Alpha-/beta-spending boundary calculations are unaffected by this
-argument.}
+\code{"HE"}, \code{"HS"}, \code{"HSk"}, \code{"SJ"}, \code{"ML"},
+\code{"REML"}, \code{"EB"}, \code{"PM"}, or \code{"PMM"}. See
+\code{?metafor::rma} for the definition of each estimator. This only
+changes the \emph{random-effects} model (\code{res_re}); the equal-effects
+model used internally for the Diversity (D^2) heterogeneity adjustment is
+always fitted with \code{method = "FE"} and is unaffected by this
+argument. Alpha-/beta-spending boundary calculations are unaffected by
+this argument.
+
+Three method strings accepted by \code{metafor::rma()} are deliberately
+NOT supported here: \code{"CO"} is not a recognised method string in
+current metafor at all (it errors there too, despite appearing as a
+documented alias for \code{"HE"} in some older/secondary sources);
+\code{"GENQ"} and \code{"GENQM"} require the caller to also supply a
+\code{weights} argument to \code{metafor::rma()}, which \code{tsa_hr()}
+does not currently collect or pass through, so passing them here raises
+an explicit error explaining why rather than silently forwarding to
+\code{metafor::rma()} and surfacing its own unrelated error.}
 
 \item{order_by}{Optional name of a column in \code{data} to sort by
 (ascending) before the cumulative analysis, e.g. a publication-year
@@ -68,7 +77,11 @@ function runs. Default \code{TRUE}.}
 \value{
 An object of class \code{"tsa_hr"}: a list containing the fitted
 random-effects and fixed-effect \code{metafor::rma} model objects,
-heterogeneity statistics, allocation and required-information-size
+heterogeneity statistics (including \code{D2}, capped at 99.9% for
+numerical stability in extreme-heterogeneity cases, alongside the
+uncapped \code{D2_raw} and a \code{D2_was_capped} logical flag so
+capping is auditable rather than silent), allocation and
+required-information-size
 details, the cumulative analysis data frame (\code{cumulative}), the
 formal sequential boundary schedule including the synthetic \code{t=1}
 final-analysis point (\code{boundary_timeline}; see "Retrospective
@@ -105,11 +118,14 @@ result.
 
 \strong{Random-effects caveat:} the cumulative Z-curve is estimated from
 a random-effects model whose between-study variance is re-estimated at
-every step. The Lan-DeMets/O'Brien-Fleming monitoring boundaries strictly
-assume the canonical joint (independent Brownian-motion increments)
-distribution, which holds exactly only for a fixed-effect cumulative
-process. With random effects this is a widely-used approximation (as in
-the official Copenhagen Trial Unit TSA software), not an exact result.
+every step. The canonical Lan-DeMets/O'Brien-Fleming theory assumes a
+fixed, canonical information process with independent Brownian-motion
+increments. Because tsahr obtains each cumulative Z statistic from a
+random-effects meta-analysis with tau-squared re-estimated at each look,
+the resulting Z process does not exactly satisfy that canonical model;
+the displayed monitoring boundaries should therefore be regarded as an
+approximation (as in the official Copenhagen Trial Unit TSA software),
+not an exact result.
 
 \strong{Retrospective boundary timeline:} the observed cumulative
 Z-curve continues through every included study, but the formal alpha
@@ -122,11 +138,22 @@ point is stored in \code{boundary_timeline}; the observed-study rows in
 DARIS. Formal crossing/futility decisions are evaluated only through the
 first observed look reaching DARIS, using the definitive \code{t = 1}
 boundary. In particular, \code{results$entered_futility_region} at that
-look reflects a comparison against the FINAL futility boundary (which by
-the RTSA convention equals the same value as the final efficacy
-boundary), not an interim one -- a \code{TRUE} value there means the
-definitive analysis did not reach conventional significance, not that a
-formal interim futility stop was triggered.
+look reflects a comparison against the FINAL futility boundary, which by
+the RTSA retrospective convention is the conventional two-sided alpha
+critical value at the definitive analysis (\code{qnorm(1 - alpha/2)},
+e.g. 1.959964 for a two-sided alpha of 0.05) -- NOT the final efficacy
+boundary, which is instead the (generally larger) sequentially-adjusted
+O'Brien-Fleming-type value at \code{t = 1}. The two are typically
+different: the RTSA retrospective branch computes
+\code{min(qnorm(1 - alpha/2), <final efficacy boundary>)}, and since the
+sequentially-adjusted efficacy boundary at \code{t = 1} is virtually
+always at or above the conventional critical value, this normally
+resolves to the conventional value itself. A \code{TRUE} value for
+\code{entered_futility_region} at that look therefore means the
+definitive analysis did not reach the conventional two-sided
+significance threshold, not that a formal interim futility stop was
+triggered, and not that the analysis fell short of the (higher)
+efficacy boundary specifically.
 }
 \examples{
 \donttest{

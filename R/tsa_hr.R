@@ -7,7 +7,6 @@
   labels <- c(
     DL    = "DerSimonian-Laird",
     HE    = "Hedges",
-    CO    = "Hedges",
     HS    = "Hunter-Schmidt",
     HSk   = "Hunter-Schmidt (with k correction)",
     SJ    = "Sidik-Jonkman",
@@ -65,15 +64,25 @@
 #'   (DerSimonian-Laird, the default -- kept as the default here for
 #'   backward compatibility with earlier tsahr versions, which always used
 #'   DL; note this differs from \code{metafor::rma()}'s own default of
-#'   \code{"REML"}), \code{"HE"} (or its alias \code{"CO"}), \code{"HS"},
-#'   \code{"HSk"}, \code{"SJ"}, \code{"ML"}, \code{"REML"}, \code{"EB"},
-#'   \code{"PM"}, \code{"GENQ"}, \code{"PMM"}, or \code{"GENQM"}. See
-#'   \code{?metafor::rma} for the definition of each estimator. This only
-#'   changes the \emph{random-effects} model (\code{res_re}); the
+#'   \code{"REML"}), \code{"HE"}, \code{"HS"}, \code{"HSk"}, \code{"SJ"},
+#'   \code{"ML"}, \code{"REML"}, \code{"EB"}, \code{"PM"}, or \code{"PMM"}.
+#'   See \code{?metafor::rma} for the definition of each estimator. This
+#'   only changes the \emph{random-effects} model (\code{res_re}); the
 #'   equal-effects model used internally for the Diversity (D^2)
 #'   heterogeneity adjustment is always fitted with \code{method = "FE"}
 #'   and is unaffected by this argument. Alpha-/beta-spending boundary
 #'   calculations are unaffected by this argument.
+#'
+#'   Three method strings accepted by \code{metafor::rma()} are
+#'   deliberately NOT supported here: \code{"CO"} is not a recognised
+#'   method string in current metafor at all (it errors there too, despite
+#'   appearing as a documented alias for \code{"HE"} in some older/
+#'   secondary sources); \code{"GENQ"} and \code{"GENQM"} require the
+#'   caller to also supply a \code{weights} argument to
+#'   \code{metafor::rma()}, which \code{tsa_hr()} does not currently
+#'   collect or pass through, so passing them here raises an explicit
+#'   error explaining why rather than silently forwarding to
+#'   \code{metafor::rma()} and surfacing its own unrelated error.
 #' @param order_by Optional name of a column in \code{data} to sort by
 #'   (ascending) before the cumulative analysis, e.g. a publication-year
 #'   column. TSA is order-dependent, so getting the chronological order
@@ -96,12 +105,14 @@
 #'
 #' **Random-effects caveat:** the cumulative Z-curve is estimated from a
 #' random-effects model whose between-study variance is re-estimated at
-#' every step. The Lan-DeMets/O'Brien-Fleming monitoring boundaries
-#' strictly assume the canonical joint (independent Brownian-motion
-#' increments) distribution, which holds exactly only for a fixed-effect
-#' cumulative process. With random effects this is a widely-used
-#' approximation (as in the official Copenhagen Trial Unit TSA software),
-#' not an exact result.
+#' every step. The canonical Lan-DeMets/O'Brien-Fleming theory assumes a
+#' fixed, canonical information process with independent Brownian-motion
+#' increments. Because tsahr obtains each cumulative Z statistic from a
+#' random-effects meta-analysis with tau-squared re-estimated at each
+#' look, the resulting Z process does not exactly satisfy that canonical
+#' model; the displayed monitoring boundaries should therefore be
+#' regarded as an approximation (as in the official Copenhagen Trial
+#' Unit TSA software), not an exact result.
 #'
 #' **Retrospective boundary timeline:** the observed cumulative Z-curve
 #' continues through every included study, but the formal alpha and beta
@@ -114,15 +125,30 @@
 #' DARIS. Formal crossing/futility decisions are evaluated only through the
 #' first observed look reaching DARIS, using the definitive \code{t = 1}
 #' boundary. In particular, \code{results$entered_futility_region} at that
-#' look reflects a comparison against the FINAL futility boundary (which by
-#' the RTSA convention equals the same value as the final efficacy
-#' boundary), not an interim one -- a \code{TRUE} value there means the
-#' definitive analysis did not reach conventional significance, not that a
-#' formal interim futility stop was triggered.
+#' look reflects a comparison against the FINAL futility boundary, which by
+#' the RTSA retrospective convention is the conventional two-sided alpha
+#' critical value at the definitive analysis (\code{qnorm(1 - alpha/2)},
+#' e.g. 1.959964 for a two-sided alpha of 0.05) -- NOT the final efficacy
+#' boundary, which is instead the (generally larger) sequentially-adjusted
+#' O'Brien-Fleming-type value at \code{t = 1}. The two are typically
+#' different: the RTSA retrospective branch computes
+#' \code{min(qnorm(1 - alpha/2), <final efficacy boundary>)}, and since the
+#' sequentially-adjusted efficacy boundary at \code{t = 1} is virtually
+#' always at or above the conventional critical value, this normally
+#' resolves to the conventional value itself. A \code{TRUE} value for
+#' \code{entered_futility_region} at that look therefore means the
+#' definitive analysis did not reach the conventional two-sided
+#' significance threshold, not that a formal interim futility stop was
+#' triggered, and not that the analysis fell short of the (higher)
+#' efficacy boundary specifically.
 #'
 #' @return An object of class \code{"tsa_hr"}: a list containing the fitted
 #'   random-effects and fixed-effect \code{metafor::rma} model objects,
-#'   heterogeneity statistics, allocation and required-information-size
+#'   heterogeneity statistics (including \code{D2}, capped at 99.9% for
+#'   numerical stability in extreme-heterogeneity cases, alongside the
+#'   uncapped \code{D2_raw} and a \code{D2_was_capped} logical flag so
+#'   capping is auditable rather than silent), allocation and
+#'   required-information-size
 #'   details, the cumulative analysis data frame (\code{cumulative}), the
 #'   formal sequential boundary schedule including the synthetic \code{t=1}
 #'   final-analysis point (\code{boundary_timeline}; see "Retrospective
@@ -180,13 +206,44 @@ tsa_hr <- function(data,
   ## allowing method = "FE" for res_re itself would make D2 -- which is
   ## defined as a function of the random-effects vs. fixed-effects
   ## variance -- degenerate (D2 = 0 by construction).
-  valid_methods <- c("DL", "HE", "CO", "HS", "HSk", "SJ", "ML", "REML",
-                      "EB", "PM", "GENQ", "PMM", "GENQM")
-  if (!is.character(method) || length(method) != 1L || is.na(method) ||
-      !(method %in% valid_methods)) {
+  ##
+  ## Three of the originally-advertised 13 method strings do not actually
+  ## work standalone and have been REMOVED from valid_methods (bug found
+  ## and fixed while adding a test that exercises every advertised value
+  ## -- previously only DL/REML/ML were ever tested, so this went
+  ## unnoticed since the method parameter was first added):
+  ##   - "CO": not a recognised method string in current metafor at all
+  ##     (verified directly against an installed metafor: it throws
+  ##     "Unknown 'method' specified", not a Hedges-estimator result).
+  ##     It appears in some older/secondary documentation as an alias for
+  ##     "HE", but is not accepted by rma() as shipped.
+  ##   - "GENQ" / "GENQM": these require the caller to also supply a
+  ##     `weights` argument to metafor::rma() (e.g.
+  ##     `rma(yi, vi, weights = 1/vi, method = "GENQ")` per metafor's own
+  ##     documentation and training materials) -- tsa_hr() does not
+  ##     collect or pass through a weights argument, so calling rma()
+  ##     with method = "GENQ"/"GENQM" and no weights errors out. Properly
+  ##     supporting these would mean adding a new tsa_hr() argument for
+  ##     user-supplied weights, which is a real feature addition, not a
+  ##     one-line fix -- left for a future release if there's demand.
+  valid_methods <- c("DL", "HE", "HS", "HSk", "SJ", "ML", "REML",
+                      "EB", "PM", "PMM")
+  if (!is.character(method) || length(method) != 1L || is.na(method)) {
+    stop("method must be a single character string; one of: ",
+         paste(valid_methods, collapse = ", "), ".")
+  }
+  if (method %in% c("GENQ", "GENQM")) {
+    stop("method = \"", method, "\" is not currently supported by tsa_hr(): ",
+         "metafor's generalized-Q-statistic estimators require a ",
+         "user-supplied `weights` argument to metafor::rma(), which ",
+         "tsa_hr() does not currently collect or pass through. Supported ",
+         "methods are: ", paste(valid_methods, collapse = ", "), ".")
+  }
+  if (!(method %in% valid_methods)) {
     stop("method must be one of: ", paste(valid_methods, collapse = ", "),
          " (the random-effects heterogeneity-variance estimators supported ",
-         "by metafor::rma(); see ?tsa_hr).")
+         "by metafor::rma() that work without additional arguments this ",
+         "package does not currently collect; see ?tsa_hr).")
   }
 
   ## --- Scalar design-parameter validation -----------------------------
@@ -219,6 +276,10 @@ tsa_hr <- function(data,
   missing_cols <- setdiff(required_cols, names(data))
   if (length(missing_cols) > 0) {
     stop("Missing required column(s): ", paste(missing_cols, collapse = ", "))
+  }
+  if (any(is.na(data$Study)) ||
+      any(!nzchar(trimws(as.character(data$Study))))) {
+    stop("Study must contain non-missing, non-empty identifiers.")
   }
   if (anyDuplicated(data$Study)) {
     stop("Study names must be unique (duplicate found in 'Study' column).")
@@ -276,6 +337,19 @@ tsa_hr <- function(data,
   if (!is.na(target_HR) && isTRUE(all.equal(target_HR, 1))) {
     stop("target_HR cannot equal 1: ln(HR)=0 makes the required information infinite.")
   }
+  if (!is.na(target_HR) && target_HR > 0.90 && target_HR < 1.10 &&
+      !isTRUE(all.equal(target_HR, 1))) {
+    ## Not an error -- values near 1 are not invalid, just increasingly
+    ## information-hungry: required information is proportional to
+    ## 1/[log(target_HR)]^2, which grows rapidly as log(target_HR) -> 0.
+    ## E.g. target_HR=0.95 requires roughly 4x the information of
+    ## target_HR=0.90 for an otherwise identical design. This is purely
+    ## a heads-up to confirm the target is intentional, not a defect.
+    warning("target_HR (", target_HR, ") is very close to the null value of 1; ",
+            "the required information size increases rapidly as log(target_HR) ",
+            "approaches zero. Confirm that this represents a clinically ",
+            "meaningful target effect.", call. = FALSE)
+  }
   if (allocation_source == "manual") {
     if (!is.numeric(allocation_p) ||
         length(allocation_p) != 1L ||
@@ -320,6 +394,14 @@ tsa_hr <- function(data,
               "for character), which may not reflect chronological order unless ",
               "e.g. formatted as 'YYYY-MM-DD'.")
     }
+    if (anyDuplicated(ob_col[!is.na(ob_col)])) {
+      warning("order_by column '", order_by, "' contains tied values; TSA is ",
+              "order-dependent, so the relative order of tied studies (broken ",
+              "by R's stable sort, i.e. their original row order among ties) ",
+              "may affect the cumulative TSA. Consider a finer-grained ",
+              "order_by column (e.g. publication date instead of year alone) ",
+              "if the exact ordering of tied studies matters.")
+    }
     data <- data[order(ob_col), , drop = FALSE]
     vcat("Studies sorted by '", order_by, "' (ascending) for the cumulative analysis.\n", sep = "")
   } else {
@@ -361,7 +443,7 @@ tsa_hr <- function(data,
   var_random <- res_re$vb[1, 1]
   var_fixed  <- res_fe$vb[1, 1]
 
-  D2 <- max(0, (var_random - var_fixed) / var_random)
+  D2_raw <- max(0, (var_random - var_fixed) / var_random)
   ## D2 is mathematically bounded in [0,1) since var_random >= var_fixed
   ## for essentially all of metafor's random-effects tau^2 estimators
   ## (they cannot produce a *smaller* variance than the equal-effects
@@ -374,13 +456,18 @@ tsa_hr <- function(data,
   ## beyond D2's own mathematical range. Treat any AF computed near this
   ## cap as a sign that the adjustment factor itself is poorly identified
   ## given the data, not as a reliable large-but-finite value.
-  if (D2 >= 0.999) {
+  ## D2_raw is retained (uncapped) alongside the capped D2 so a downstream
+  ## user inspecting the result can tell the two apart -- D2 == 0.999
+  ## alone doesn't distinguish "D2 genuinely computed as 0.999" from
+  ## "D2 was capped here from something larger/degenerate".
+  D2_was_capped <- D2_raw >= 0.999
+  D2 <- if (D2_was_capped) 0.999 else D2_raw
+  if (D2_was_capped) {
     warning("Diversity D2 is at or very near its theoretical upper bound (100%), ",
             "indicating extreme heterogeneity relative to the number of studies. ",
             "D2 has been capped at 99.9% to avoid a numerically unstable/explosive ",
             "heterogeneity adjustment factor; interpret the required information ",
             "size and DARIS with caution in this scenario.", call. = FALSE)
-    D2 <- 0.999
   }
   AF <- 1 / (1 - D2)
 
@@ -826,7 +913,8 @@ tsa_hr <- function(data,
                        method = method),
     res_re = res_re,
     res_fe = res_fe,
-    heterogeneity = list(Q = Q, df = df, I2 = I2, tau2 = tau2, D2 = D2, AF = AF),
+    heterogeneity = list(Q = Q, df = df, I2 = I2, tau2 = tau2, D2 = D2,
+                          D2_raw = D2_raw, D2_was_capped = D2_was_capped, AF = AF),
     beta_engine = beta_engine,
     information_size = list(z_alpha = z_alpha, z_beta = z_beta,
                              info_required = info_required, RIS_events = RIS_events,

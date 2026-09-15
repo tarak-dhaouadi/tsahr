@@ -38,6 +38,22 @@ test_that("invalid inputs are rejected", {
                        verbose = FALSE), "method must be one of")
   expect_error(tsa_hr(path, target_HR = 0.80, method = c("DL", "REML"),
                        verbose = FALSE), "method must be one of")
+  ## "CO" is not a recognised method string in current metafor at all
+  ## (despite appearing as a documented alias for "HE" in some older/
+  ## secondary sources) -- falls through to the generic invalid-method
+  ## error, same as any other unsupported string.
+  expect_error(tsa_hr(path, target_HR = 0.80, method = "CO",
+                       verbose = FALSE), "method must be one of")
+  ## "GENQ"/"GENQM" ARE genuine metafor method strings, but require a
+  ## user-supplied `weights` argument to metafor::rma() that tsa_hr()
+  ## does not currently collect or pass through -- these get a specific,
+  ## explanatory error rather than the generic "method must be one of"
+  ## list (which would be misleading, since these two names ARE real
+  ## metafor methods, just not ones usable standalone here).
+  expect_error(tsa_hr(path, target_HR = 0.80, method = "GENQ",
+                       verbose = FALSE), "require.*weights.*argument")
+  expect_error(tsa_hr(path, target_HR = 0.80, method = "GENQM",
+                       verbose = FALSE), "require.*weights.*argument")
   expect_error(tsa_hr(path, allocation_source = "manual",
                        allocation_p = NA, verbose = FALSE),
                "single finite numeric value")
@@ -73,6 +89,34 @@ test_that("method defaults to DL and accepts other metafor random-effects estima
   ## The equal-effects comparator used for D2 is untouched by `method`.
   expect_identical(res_reml$res_fe$method, "FE")
   expect_identical(res_reml$res_fe$b, res_dl$res_fe$b)
+})
+
+test_that("every advertised method value runs and returns a valid object", {
+  ## Regression test for a real bug found (independently of the external
+  ## audit that prompted this test's addition) while writing this exact
+  ## test: tsa_hr() previously advertised 13 method values, but 3 of them
+  ## never actually worked -- "CO" is not a recognised metafor method
+  ## string at all, and "GENQ"/"GENQM" require a `weights` argument that
+  ## tsa_hr() doesn't collect. This went unnoticed because only DL/REML/
+  ## ML were ever tested. This test exercises every method value tsa_hr()
+  ## currently advertises as supported (see `valid_methods` in
+  ## R/tsa_hr.R), so a similar gap can't recur silently -- it doesn't
+  ## check that all methods produce the same answer, only that each one:
+  ## runs without error, returns the method it was asked for, returns a
+  ## finite tau2, and produces a valid tsa_hr object.
+  path <- tsahr_example_data()
+  supported_methods <- c("DL", "HE", "HS", "HSk", "SJ", "ML", "REML",
+                          "EB", "PM", "PMM")
+
+  for (m in supported_methods) {
+    res <- suppressMessages(suppressWarnings(
+      tsa_hr(path, target_HR = 0.80, method = m, verbose = FALSE)
+    ))
+    expect_s3_class(res, "tsa_hr")
+    expect_identical(res$res_re$method, m, info = paste("method =", m))
+    expect_identical(res$parameters$method, m, info = paste("method =", m))
+    expect_true(is.finite(res$heterogeneity$tau2), info = paste("method =", m))
+  }
 })
 
 test_that("print, summary, and plot methods work without error", {
@@ -233,6 +277,61 @@ test_that("D2/AF are safely capped under extreme heterogeneity", {
   )
   expect_true(res$heterogeneity$D2 < 1)
   expect_true(is.finite(res$heterogeneity$AF))
+  ## D2_raw/D2_was_capped make the capping auditable rather than silent:
+  ## D2_raw should be the (uncapped) value that triggered the cap, i.e.
+  ## >= 0.999, and D2_was_capped should be TRUE and D2 itself pinned to
+  ## exactly the cap.
+  expect_true(res$heterogeneity$D2_was_capped)
+  expect_true(res$heterogeneity$D2_raw >= 0.999)
+  expect_equal(res$heterogeneity$D2, 0.999)
+})
+
+test_that("D2_was_capped is FALSE and D2_raw == D2 in the ordinary (uncapped) case", {
+  path <- tsahr_example_data()
+  res <- suppressMessages(tsa_hr(path, target_HR = 0.80, verbose = FALSE))
+  expect_false(res$heterogeneity$D2_was_capped)
+  expect_equal(res$heterogeneity$D2_raw, res$heterogeneity$D2)
+})
+
+test_that("Study identifiers must be non-missing and non-blank", {
+  bad_na <- data.frame(
+    Study = c("A", NA),
+    log_HR = c(0.1, 0.2), Std_Error = c(0.1, 0.1),
+    Events_Treatment = c(10, 10), N_treatment = c(100, 100),
+    Events_controls = c(10, 10), N_controls = c(100, 100)
+  )
+  bad_blank <- bad_na
+  bad_blank$Study <- c("A", "   ")
+
+  expect_error(tsa_hr(bad_na, target_HR = 0.80, verbose = FALSE),
+               "non-missing, non-empty")
+  expect_error(tsa_hr(bad_blank, target_HR = 0.80, verbose = FALSE),
+               "non-missing, non-empty")
+})
+
+test_that("order_by warns on tied values", {
+  path <- tsahr_example_data()
+  d <- as.data.frame(readxl::read_excel(path))
+  d$Year <- rep(2010, nrow(d))  ## force every row to tie
+
+  expect_warning(
+    tsa_hr(d, target_HR = 0.80, order_by = "Year", verbose = FALSE),
+    "tied values"
+  )
+})
+
+test_that("target_HR near the null value of 1 triggers a warning, not an error", {
+  path <- tsahr_example_data()
+  expect_warning(
+    res <- tsa_hr(path, target_HR = 0.95, verbose = FALSE),
+    "very close to the null value of 1"
+  )
+  expect_s3_class(res, "tsa_hr")
+  ## Comfortably outside the near-null band: no warning expected here.
+  expect_warning(
+    tsa_hr(path, target_HR = 0.80, verbose = FALSE),
+    NA
+  )
 })
 
 test_that("target_HR = NA triggers a circularity warning", {
