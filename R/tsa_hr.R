@@ -16,7 +16,12 @@
     PM    = "Paule-Mandel",
     GENQ  = "generalized Q-statistic",
     PMM   = "Paule-Mandel (median-unbiased)",
-    GENQM = "generalized Q-statistic (median-unbiased)"
+    GENQM = "generalized Q-statistic (median-unbiased)",
+    ## Aliases for the Hedges estimator; tsa_hr() normalises these to
+    ## "HE" before they reach here, but keep them mapped so the helper is
+    ## correct if called directly with an un-normalised code.
+    CO    = "Hedges (Cochran alias)",
+    VC    = "Hedges (variance-component alias)"
   )
   if (method %in% names(labels)) labels[[method]] else paste0("'", method, "'")
 }
@@ -59,13 +64,16 @@
 #'   standard, non-circular, protocol-driven TSA.
 #' @param method Character string specifying the heterogeneity-variance
 #'   (tau^2) estimator used for the \emph{random-effects} meta-analysis and
-#'   cumulative (sequential) TSA model, passed straight through to
-#'   \code{method} in \code{metafor::rma()}. One of \code{"DL"}
+#'   cumulative (sequential) TSA model, passed to
+#'   \code{method} in \code{metafor::rma()} after validation and, for the
+#'   aliases \code{"CO"}/\code{"VC"}, normalisation to \code{"HE"}. One of \code{"DL"}
 #'   (DerSimonian-Laird, the default -- kept as the default here for
 #'   backward compatibility with earlier tsahr versions, which always used
 #'   DL; note this differs from \code{metafor::rma()}'s own default of
 #'   \code{"REML"}), \code{"HE"}, \code{"HS"}, \code{"HSk"}, \code{"SJ"},
 #'   \code{"ML"}, \code{"REML"}, \code{"EB"}, \code{"PM"}, or \code{"PMM"}.
+#'   \code{"CO"} and \code{"VC"} are also accepted and normalised to
+#'   \code{"HE"} (see below).
 #'   See \code{?metafor::rma} for the definition of each estimator. This
 #'   only changes the \emph{random-effects} model (\code{res_re}); the
 #'   equal-effects model used internally for the Diversity (D^2)
@@ -73,11 +81,25 @@
 #'   and is unaffected by this argument. Alpha-/beta-spending boundary
 #'   calculations are unaffected by this argument.
 #'
-#'   Three method strings accepted by \code{metafor::rma()} are
-#'   deliberately NOT supported here: \code{"CO"} is not a recognised
-#'   method string in current metafor at all (it errors there too, despite
-#'   appearing as a documented alias for \code{"HE"} in some older/
-#'   secondary sources); \code{"GENQ"} and \code{"GENQM"} require the
+#'   \code{"CO"} and \code{"VC"} are accepted as aliases for \code{"HE"}
+#'   and are normalised to \code{"HE"} before being passed to
+#'   \code{metafor::rma()}. metafor's documentation notes that the Hedges
+#'   estimator is also known as the Cochran (\code{"CO"}) or
+#'   variance-component (\code{"VC"}) estimator, and that those strings may
+#'   be used to select it -- but that alias is not accepted by every
+#'   metafor version (older releases reject a bare \code{"CO"} with
+#'   \dQuote{Unknown 'method' specified}). Normalising here makes
+#'   \code{tsa_hr()} behave identically across metafor versions rather than
+#'   inheriting that version skew, and avoids pinning a minimum metafor
+#'   version purely for an alias. All three strings denote the same
+#'   estimator, so this has no numerical consequence. The returned object
+#'   records both \code{parameters$method} (the normalised string actually
+#'   used, i.e. \code{"HE"}) and \code{parameters$method_requested} (what
+#'   the caller passed).
+#'
+#'   Two method strings accepted by \code{metafor::rma()} are
+#'   deliberately NOT supported here: \code{"GENQ"} and \code{"GENQM"}
+#'   require the
 #'   caller to also supply a \code{weights} argument to
 #'   \code{metafor::rma()}, which \code{tsa_hr()} does not currently
 #'   collect or pass through, so passing them here raises an explicit
@@ -88,7 +110,13 @@
 #'   column. TSA is order-dependent, so getting the chronological order
 #'   right matters. Default \code{NULL}, which uses the row order already
 #'   present in \code{data} and assumes it is chronological (with no way
-#'   for the package to verify this).
+#'   for the package to verify this). Column names in \code{data} have
+#'   spaces replaced with underscores on load (so an Excel header
+#'   \dQuote{Std Error} becomes \code{Std_Error}); \code{order_by} is
+#'   normalised the same way, so either \code{"Publication Year"} or
+#'   \code{"Publication_Year"} will match that column. If two distinct
+#'   headers would collide once spaces become underscores, \code{tsa_hr()}
+#'   stops rather than silently using whichever column came first.
 #' @param verbose Logical; print analysis details to the console as the
 #'   function runs (mirrors the diagnostic output of the original script).
 #'   Default \code{TRUE}.
@@ -149,7 +177,15 @@
 #'   uncapped \code{D2_raw} and a \code{D2_was_capped} logical flag so
 #'   capping is auditable rather than silent), allocation and
 #'   required-information-size
-#'   details, the cumulative analysis data frame (\code{cumulative}), the
+#'   details (\code{information_size}, which includes two distinct
+#'   circularity flags: \code{circularity_warning} is \code{TRUE} whenever
+#'   \code{target_HR} was left unspecified, since deriving the required
+#'   information size from the observed pooled effect is circular
+#'   regardless of how much information accrued; \code{circularity_severe}
+#'   additionally requires accrued events to exceed three times the
+#'   resulting DARIS, the runaway case in which the boundary collapses to
+#'   the conventional one almost immediately),
+#'   the cumulative analysis data frame (\code{cumulative}), the
 #'   formal sequential boundary schedule including the synthetic \code{t=1}
 #'   final-analysis point (\code{boundary_timeline}; see "Retrospective
 #'   boundary timeline" above), boundary-crossing results (\code{results},
@@ -207,16 +243,11 @@ tsa_hr <- function(data,
   ## defined as a function of the random-effects vs. fixed-effects
   ## variance -- degenerate (D2 = 0 by construction).
   ##
-  ## Three of the originally-advertised 13 method strings do not actually
+  ## Two of the originally-advertised 13 method strings do not actually
   ## work standalone and have been REMOVED from valid_methods (bug found
   ## and fixed while adding a test that exercises every advertised value
   ## -- previously only DL/REML/ML were ever tested, so this went
   ## unnoticed since the method parameter was first added):
-  ##   - "CO": not a recognised method string in current metafor at all
-  ##     (verified directly against an installed metafor: it throws
-  ##     "Unknown 'method' specified", not a Hedges-estimator result).
-  ##     It appears in some older/secondary documentation as an alias for
-  ##     "HE", but is not accepted by rma() as shipped.
   ##   - "GENQ" / "GENQM": these require the caller to also supply a
   ##     `weights` argument to metafor::rma() (e.g.
   ##     `rma(yi, vi, weights = 1/vi, method = "GENQ")` per metafor's own
@@ -226,6 +257,32 @@ tsa_hr <- function(data,
   ##     supporting these would mean adding a new tsa_hr() argument for
   ##     user-supplied weights, which is a real feature addition, not a
   ##     one-line fix -- left for a future release if there's demand.
+  ##
+  ## "CO" (and "VC") are handled differently, as of 0.2.6.7: they are
+  ## NORMALISED to "HE" rather than accepted or rejected outright.
+  ## Background -- 0.2.6.6 removed "CO" on the basis of a direct test
+  ## against an installed metafor (4.4.0, from Ubuntu's apt package),
+  ## where `rma(..., method = "CO")` threw "Unknown 'method' specified".
+  ## That observation was correct for that version, but the conclusion
+  ## drawn from it ("not a recognised method string in current metafor at
+  ## all") was too strong: metafor's current documentation states that
+  ## the Hedges estimator is also called the variance-component or
+  ## Cochran estimator, and that method = "VC" or method = "CO" can be
+  ## used to select it. So the alias exists in newer metafor but not in
+  ## the older installed one -- i.e. whether a bare "CO" works is
+  ## metafor-version-dependent.
+  ##
+  ## Normalising to "HE" ourselves makes tsa_hr() behave identically on
+  ## every metafor version, rather than inheriting that version skew.
+  ## "HE" is the canonical string accepted by all versions, and the three
+  ## names denote the SAME estimator, so this changes nothing
+  ## numerically. This also avoids having to declare a minimum metafor
+  ## version in DESCRIPTION purely to pin down an alias.
+  method_requested <- method
+  if (is.character(method) && length(method) == 1L && !is.na(method) &&
+      method %in% c("CO", "VC")) {
+    method <- "HE"
+  }
   valid_methods <- c("DL", "HE", "HS", "HSk", "SJ", "ML", "REML",
                       "EB", "PM", "PMM")
   if (!is.character(method) || length(method) != 1L || is.na(method)) {
@@ -268,7 +325,35 @@ tsa_hr <- function(data,
   } else {
     data <- as.data.frame(data)
   }
+  ## Excel sheets commonly use spaces in headers ("Std Error"), so
+  ## normalise them to underscores to match the required column names.
+  ## This can, however, MERGE two originally-distinct headers into the
+  ## same name (e.g. a sheet containing both "Std Error" and
+  ## "Std_Error"), after which `data$Std_Error` silently resolves to
+  ## whichever came first -- a wrong-column-used bug that would produce
+  ## a plausible-looking but incorrect analysis with no error. Detect
+  ## and refuse that case rather than guessing which column was meant.
+  names_before <- names(data)
   names(data) <- gsub(" ", "_", names(data))
+  if (anyDuplicated(names(data))) {
+    clashing <- unique(names(data)[duplicated(names(data))])
+    stop("Column names are not unique after spaces are replaced with ",
+         "underscores: ", paste(sQuote(clashing), collapse = ", "),
+         ". Original column name(s) involved: ",
+         paste(sQuote(names_before[names(data) %in% clashing]),
+               collapse = ", "),
+         ". Rename the columns in the source data so they remain ",
+         "distinct once spaces become underscores.")
+  }
+
+  ## `order_by` is matched against the POST-normalisation names, so a
+  ## user passing the header exactly as it appears in their spreadsheet
+  ## ("Publication Year") would otherwise get a "not found" error for a
+  ## column that is plainly there. Normalise it the same way.
+  if (!is.null(order_by) && is.character(order_by) &&
+      length(order_by) == 1L && !is.na(order_by)) {
+    order_by <- gsub(" ", "_", order_by)
+  }
 
   required_cols <- c("Study", "log_HR", "Std_Error",
                       "Events_Treatment", "N_treatment",
@@ -296,6 +381,26 @@ tsa_hr <- function(data,
   }
 
   ## --- Event/sample-size sanity checks -------------------------------
+  ## Type first, then finiteness. is.finite() on a character or factor
+  ## column returns all-FALSE rather than erroring, so a column read in
+  ## as text (e.g. Excel cells stored as strings, or a stray footnote
+  ## marker forcing the whole column to character) would otherwise be
+  ## reported as "found NA/NaN/Inf" -- technically true of the is.finite
+  ## result, but a misleading diagnosis of a type problem. Name the real
+  ## cause instead.
+  numeric_cols <- c("log_HR", "Std_Error", "Events_Treatment",
+                     "N_treatment", "Events_controls", "N_controls")
+  not_numeric <- vapply(data[numeric_cols], function(col) !is.numeric(col),
+                         logical(1))
+  if (any(not_numeric)) {
+    stop("Column(s) must be numeric, but are not: ",
+         paste(sprintf("%s (%s)", numeric_cols[not_numeric],
+                       vapply(data[numeric_cols[not_numeric]],
+                              function(col) class(col)[1], character(1))),
+               collapse = ", "),
+         ". Check for text, footnote markers, or blank-but-not-empty cells ",
+         "in the source data.")
+  }
   if (any(!is.finite(data$log_HR))) {
     stop("log_HR must be finite for every study (found NA/NaN/Inf).")
   }
@@ -444,11 +549,17 @@ tsa_hr <- function(data,
   var_fixed  <- res_fe$vb[1, 1]
 
   D2_raw <- max(0, (var_random - var_fixed) / var_random)
-  ## D2 is mathematically bounded in [0,1) since var_random >= var_fixed
-  ## for essentially all of metafor's random-effects tau^2 estimators
-  ## (they cannot produce a *smaller* variance than the equal-effects
-  ## model), but with very few studies and extreme heterogeneity it can
-  ## approach 1 closely enough that 1/(1-D2)
+  ## D2 is bounded in [0,1) BY DEFINITION, and in practice we expect
+  ## var_random >= var_fixed for essentially all of metafor's
+  ## random-effects tau^2 estimators (they should not produce a *smaller*
+  ## variance than the equal-effects model). That is a statement about
+  ## the definition and about typical estimator behaviour, though, not a
+  ## guarantee about the computed ratio: the value here is a function of
+  ## two separately estimated variances, so the usual numerical and
+  ## model-behaviour caveats apply -- which is exactly why the max(0, .)
+  ## above and the cap below exist rather than being redundant. With very
+  ## few studies and extreme heterogeneity D2 can approach 1 closely
+  ## enough that 1/(1-D2)
   ## becomes numerically unstable/explosive. Cap defensively and warn.
   ## NOTE: the 99.9% cap is a purely NUMERICAL safeguard against division
   ## by (near) zero, not a statistically justified correction to D2 or AF
@@ -541,13 +652,36 @@ tsa_hr <- function(data,
                 sum(data$total_events), 100 * sum(data$total_events) / DARIS_events))
   }
 
-  circularity_warning <- is.na(target_HR) && sum(data$total_events) / DARIS_events > 3
-  if (verbose && circularity_warning) {
+  ## Circularity flags. These are two DIFFERENT facts and were conflated
+  ## into one field before 0.2.6.8:
+  ##   - circularity_warning: the RIS was derived from the OBSERVED pooled
+  ##     effect (target_HR = NA). This is circular, full stop -- it does
+  ##     not depend on how much information happened to accrue.
+  ##   - circularity_severe: circular AND the accrued events dwarf the
+  ##     resulting DARIS, which is the tell-tale runaway case where the
+  ##     boundary collapses to the conventional one almost immediately.
+  ## Previously `circularity_warning` carried the *severe* condition
+  ## while summary.tsa_hr() printed a message worded for the *general*
+  ## one, so a circular analysis at, say, 1.5x DARIS reported no
+  ## circularity note at all despite ?tsa_hr correctly documenting that
+  ## any RIS from the observed pooled effect is circular.
+  circularity_warning <- is.na(target_HR)
+  circularity_severe  <- circularity_warning &&
+    sum(data$total_events) / DARIS_events > 3
+  if (verbose && circularity_severe) {
     cat("*** NOTE: accrued events greatly exceed the DARIS because the RIS was\n")
     cat("    calculated from the observed (very large, very precise) pooled effect.\n")
     cat("    This is circular and will make the TSA boundary collapse almost\n")
     cat("    immediately to the conventional boundary. Consider re-running with\n")
     cat("    a pre-specified 'target_HR' for a more standard, protocol-driven TSA. ***\n\n")
+  } else if (verbose && circularity_warning) {
+    ## Circular, but not the runaway case -- still worth flagging, since
+    ## the circularity itself is the methodological problem.
+    cat("*** NOTE: 'target_HR' was not specified, so the required information size\n")
+    cat("    was calculated from the OBSERVED pooled effect. This is circular: the\n")
+    cat("    required information size depends on the result it is being used to\n")
+    cat("    evaluate. Set a pre-specified 'target_HR' for a standard,\n")
+    cat("    protocol-driven TSA. ***\n\n")
   }
 
   ## -----------------------------------------------------------------
@@ -587,11 +721,12 @@ tsa_hr <- function(data,
     cat("*** IMPORTANT CAVEAT: the cumulative Z-curve above is from a RANDOM-\n")
     cat("    EFFECTS model, whose between-study variance (tau^2) is RE-ESTIMATED\n")
     cat("    at every step. The Lan-DeMets/O'Brien-Fleming monitoring boundaries\n")
-    cat("    strictly assume the canonical joint distribution (independent\n")
-    cat("    Brownian-motion increments), which holds exactly only for a\n")
-    cat("    FIXED-EFFECT cumulative process. With random effects this is a\n")
-    cat("    widely-used APPROXIMATION (as in the official Copenhagen Trial Unit\n")
-    cat("    TSA software), not an exact result. ***\n\n")
+    cat("    strictly assume a fixed, CANONICAL information process with\n")
+    cat("    independent Brownian-motion increments. A random-effects cumulative\n")
+    cat("    Z-curve with tau^2 re-estimated at each look does not exactly satisfy\n")
+    cat("    those assumptions, so applying the boundaries here is a widely-used\n")
+    cat("    APPROXIMATION (as in the official Copenhagen Trial Unit TSA\n")
+    cat("    software), not an exact result. ***\n\n")
   }
 
   ## -----------------------------------------------------------------
@@ -910,7 +1045,8 @@ tsa_hr <- function(data,
                        allocation_source = allocation_source,
                        allocation_p_used = allocation_p_used,
                        target_HR = target_HR, HR_anticipated = HR_anticipated,
-                       method = method),
+                       method = method,
+                       method_requested = method_requested),
     res_re = res_re,
     res_fe = res_fe,
     heterogeneity = list(Q = Q, df = df, I2 = I2, tau2 = tau2, D2 = D2,
@@ -920,7 +1056,8 @@ tsa_hr <- function(data,
                              info_required = info_required, RIS_events = RIS_events,
                              DARIS_info = DARIS_info, DARIS_events = DARIS_events,
                              DARIS_info_threshold_events = DARIS_info_threshold_events,
-                             circularity_warning = circularity_warning),
+                             circularity_warning = circularity_warning,
+                             circularity_severe = circularity_severe),
     cumulative = cumul_df,
     boundary_timeline = boundary_timeline,
     results = list(crossed_conventional = crossed_conventional,

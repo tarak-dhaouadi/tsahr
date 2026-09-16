@@ -40,13 +40,16 @@ standard, non-circular, protocol-driven TSA.}
 
 \item{method}{Character string specifying the heterogeneity-variance
 (tau^2) estimator used for the \emph{random-effects} meta-analysis and
-cumulative (sequential) TSA model, passed straight through to
-\code{method} in \code{metafor::rma()}. One of \code{"DL"}
+cumulative (sequential) TSA model, passed to
+\code{method} in \code{metafor::rma()} after validation and, for the
+aliases \code{"CO"}/\code{"VC"}, normalisation to \code{"HE"}. One of \code{"DL"}
 (DerSimonian-Laird, the default -- kept as the default here for backward
 compatibility with earlier tsahr versions, which always used DL; note
 this differs from \code{metafor::rma()}'s own default of \code{"REML"}),
 \code{"HE"}, \code{"HS"}, \code{"HSk"}, \code{"SJ"}, \code{"ML"},
-\code{"REML"}, \code{"EB"}, \code{"PM"}, or \code{"PMM"}. See
+\code{"REML"}, \code{"EB"}, \code{"PM"}, or \code{"PMM"}. \code{"CO"} and
+\code{"VC"} are also accepted and normalised to \code{"HE"} (see below).
+See
 \code{?metafor::rma} for the definition of each estimator. This only
 changes the \emph{random-effects} model (\code{res_re}); the equal-effects
 model used internally for the Diversity (D^2) heterogeneity adjustment is
@@ -54,10 +57,23 @@ always fitted with \code{method = "FE"} and is unaffected by this
 argument. Alpha-/beta-spending boundary calculations are unaffected by
 this argument.
 
-Three method strings accepted by \code{metafor::rma()} are deliberately
-NOT supported here: \code{"CO"} is not a recognised method string in
-current metafor at all (it errors there too, despite appearing as a
-documented alias for \code{"HE"} in some older/secondary sources);
+\code{"CO"} and \code{"VC"} are accepted as aliases for \code{"HE"} and
+are normalised to \code{"HE"} before being passed to
+\code{metafor::rma()}. metafor's documentation notes that the Hedges
+estimator is also known as the Cochran (\code{"CO"}) or variance-component
+(\code{"VC"}) estimator, and that those strings may be used to select it
+-- but that alias is not accepted by every metafor version (older releases
+reject a bare \code{"CO"} with \dQuote{Unknown 'method' specified}).
+Normalising here makes \code{tsa_hr()} behave identically across metafor
+versions rather than inheriting that version skew, and avoids pinning a
+minimum metafor version purely for an alias. All three strings denote the
+same estimator, so this has no numerical consequence. The returned object
+records both \code{parameters$method} (the normalised string actually
+used, i.e. \code{"HE"}) and \code{parameters$method_requested} (what the
+caller passed).
+
+Two method strings accepted by \code{metafor::rma()} are deliberately
+NOT supported here:
 \code{"GENQ"} and \code{"GENQM"} require the caller to also supply a
 \code{weights} argument to \code{metafor::rma()}, which \code{tsa_hr()}
 does not currently collect or pass through, so passing them here raises
@@ -69,7 +85,13 @@ an explicit error explaining why rather than silently forwarding to
 column. TSA is order-dependent, so getting the chronological order right
 matters. Default \code{NULL}, which uses the row order already present
 in \code{data} and assumes it is chronological (with no way for the
-package to verify this).}
+package to verify this). Column names in \code{data} have spaces replaced
+with underscores on load (so an Excel header \dQuote{Std Error} becomes
+\code{Std_Error}); \code{order_by} is normalised the same way, so either
+\code{"Publication Year"} or \code{"Publication_Year"} will match that
+column. If two distinct headers would collide once spaces become
+underscores, \code{tsa_hr()} stops rather than silently using whichever
+column came first.}
 
 \item{verbose}{Logical; print analysis details to the console as the
 function runs. Default \code{TRUE}.}
@@ -82,7 +104,14 @@ numerical stability in extreme-heterogeneity cases, alongside the
 uncapped \code{D2_raw} and a \code{D2_was_capped} logical flag so
 capping is auditable rather than silent), allocation and
 required-information-size
-details, the cumulative analysis data frame (\code{cumulative}), the
+details (\code{information_size}, which includes two distinct circularity
+flags: \code{circularity_warning} is \code{TRUE} whenever \code{target_HR}
+was left unspecified, since deriving the required information size from
+the observed pooled effect is circular regardless of how much information
+accrued; \code{circularity_severe} additionally requires accrued events to
+exceed three times the resulting DARIS, the runaway case in which the
+boundary collapses to the conventional one almost immediately),
+the cumulative analysis data frame (\code{cumulative}), the
 formal sequential boundary schedule including the synthetic \code{t=1}
 final-analysis point (\code{boundary_timeline}; see "Retrospective
 boundary timeline" below), boundary-crossing results (\code{results},

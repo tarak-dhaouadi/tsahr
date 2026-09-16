@@ -1,3 +1,197 @@
+# tsahr 0.2.6.9
+
+## Fixes a broken test introduced in 0.2.6.8 (`R CMD check` failure)
+
+* **`test-tsa_hr.R` "non-numeric input columns are diagnosed as a type
+  problem" failed under `R CMD check`** with
+  `replacement has 0 rows, data has 10`. The bug was in the test, not in
+  the package: it read the bundled example workbook directly with
+  `readxl::read_excel()` and then addressed `d$Events_Treatment`, but
+  several headers in that sheet are stored **with spaces** (`Events
+  Treatment`, `N treatment`, `Events controls`, `N controls`; only
+  `Study`, `log_HR`, and `Std_Error` are already underscored). Space-to-
+  underscore normalisation happens *inside* `tsa_hr()`, so at that point
+  in the test `d$Events_Treatment` was `NULL`, and
+  `as.character(NULL)` is `character(0)` -- which cannot be assigned
+  into a 10-row data frame.
+* The test now applies the same `gsub(" ", "_", names(d))` normalisation
+  that `tsa_hr()` performs before addressing columns, so it targets real
+  columns and stays correct if the example sheet's headers change.
+* **No package code changed.** The 0.2.6.8 type-validation feature itself
+  was never exercised by the failing line -- the test errored before
+  reaching `tsa_hr()`. The other four tests that read the workbook
+  directly were checked for the same latent flaw and are unaffected:
+  they either add new columns or use `Std_Error`, which is genuinely
+  underscored in the source file.
+
+Note on the `RoxygenNote` mismatch reported by `devtools::check()`
+(installed roxygen2 8.1.0 vs declared 7.3.1): this is informational, not
+an error. `RoxygenNote` is deliberately left at 7.3.1 so `check()` does
+not re-document the package, because the `.Rd` files have been edited by
+hand in recent releases; regenerating them with roxygen2 would discard
+those edits. If you switch back to a roxygen-driven workflow, run
+`devtools::document()` once and let it update both the `.Rd` files and
+this field together.
+
+# tsahr 0.2.6.8
+
+## Fixes a semantic bug in `circularity_warning`, plus three documentation/validation refinements
+
+Prompted by an external (ChatGPT) audit of 0.2.6.7, which rated the
+release otherwise ready and identified `circularity_warning` as the one
+item to fix before finalising. Each item was checked against the code
+before acting on it.
+
+* **`circularity_warning` now means what its name and message say.** It
+  was defined as
+  `is.na(target_HR) && sum(total_events) / DARIS_events > 3` -- i.e. it
+  carried a *severity* condition on top of the circularity condition.
+  But `summary.tsa_hr()` gates a message worded purely for the general
+  case on that flag ("target_HR was not specified, so the observed
+  pooled HR was used... This is circular"). The consequence was a real
+  user-visible gap, not just a misnomer: a circular analysis sitting at,
+  say, 1.5x DARIS reported **no circularity note at all**, directly
+  contradicting `?tsa_hr`, which correctly documents that any RIS
+  derived from the observed pooled effect is circular. Now split into
+  two fields:
+  - `circularity_warning <- is.na(target_HR)` -- circular, full stop.
+  - `circularity_severe` -- circular **and** accrued events exceed three
+    times DARIS (the runaway case where the boundary collapses to the
+    conventional one almost immediately).
+  Both are returned in `information_size` and documented in `?tsa_hr`.
+  The statistical calculation is unchanged; only the reporting is.
+* **Verbose output now covers the non-severe circular case too.** The
+  detailed "accrued events greatly exceed DARIS" block is unchanged and
+  still fires only when `circularity_severe`, but a shorter note now
+  fires for any circular analysis, so the console and `summary()` agree
+  with each other and with the documentation. `summary()` prints the
+  general note whenever circular, and adds the collapse warning on top
+  when severe.
+* **Verbose random-effects caveat resynchronised with the Rd wording.**
+  The console still used the older "holds exactly only for a
+  FIXED-EFFECT cumulative process" formulation that was deliberately
+  replaced in the source/Rd documentation in an earlier release, leaving
+  two subtly different descriptions of the same caveat. The console now
+  uses the more precise canonical-information-process framing.
+* **The `method` documentation no longer says "passed straight through"**
+  to `metafor::rma()`, which stopped being exactly true in 0.2.6.7 when
+  `"CO"`/`"VC"` began being normalised to `"HE"` first. Now states that
+  it is passed after validation and, for those aliases, normalisation.
+* **Non-numeric input columns are diagnosed as a type problem.**
+  `is.finite()` returns all-`FALSE` (rather than erroring) on a
+  character or factor column, so a column read in as text -- Excel cells
+  stored as strings, a stray footnote marker forcing the column to
+  character -- surfaced as "Column(s) must contain only finite values
+  (found NA/NaN/Inf)". True of the `is.finite` result, but a misleading
+  diagnosis. `log_HR`, `Std_Error`, and the four count columns are now
+  type-checked first, and the error names each offending column and its
+  actual class.
+* **New regression tests** for the circularity split (including that
+  `circularity_severe` never holds without `circularity_warning`), for
+  `summary()` reporting circularity in the non-severe case, and for the
+  numeric-type diagnosis.
+
+Not changed, deliberately: the beta engine remains frozen and
+RTSA-derived/adapted, as in 0.2.6.7. The audit's suggestion to escalate
+`order_by` NA handling from warning to error was not adopted -- the
+current behaviour is transparent and reproducible, and the audit itself
+scoped that as a possible future major release, not a fix for this one.
+
+# tsahr 0.2.6.7
+
+## Reverses an incorrect 0.2.6.6 decision: `method = "CO"` is a real metafor alias and is now supported
+
+Prompted by an external (ChatGPT) review of 0.2.6.6, which flagged the
+`"CO"` removal as a release blocker. The flag was correct; this release
+reverses that removal and picks up several smaller items from the same
+review. Each was checked against primary sources or the actual code
+before acting on it.
+
+* **`method = "CO"` (and `"VC"`) are now accepted, and normalised to
+  `"HE"`.** 0.2.6.6 removed `"CO"` from the supported methods on the
+  basis of a direct test against an installed metafor, which threw
+  `Unknown 'method' specified`. That observation was real, but the
+  conclusion drawn from it -- that `"CO"` is "not a recognised method
+  string in current metafor at all" -- was **wrong**, and the
+  0.2.6.6 source comment and documentation asserting that have been
+  corrected. metafor's current documentation states that the Hedges
+  estimator is also called the variance-component or Cochran estimator
+  and that `method = "VC"` or `method = "CO"` may be used to select it.
+  The two observations are reconciled by version skew: the alias is
+  present in current metafor but absent from the older release the
+  0.2.6.6 test ran against (the CRAN 4.6-0 reference manual carries the
+  same sentence *without* the alias parenthetical, which is exactly the
+  boundary in question).
+* **Normalised rather than merely passed through**, which is the point
+  of the fix: forwarding a bare `"CO"` to `metafor::rma()` would make
+  `tsa_hr()` work or fail depending on which metafor the user happens to
+  have installed. Mapping `"CO"`/`"VC"` to `"HE"` inside `tsa_hr()`
+  makes behaviour identical on every metafor version, and avoids
+  declaring a minimum metafor version in `DESCRIPTION` purely to pin
+  down an alias. All three strings denote the same estimator, so there
+  is no numerical consequence.
+* **The normalisation is auditable, not silent:** the returned object
+  now carries `parameters$method_requested` (what the caller passed)
+  alongside `parameters$method` (the normalised string actually used).
+  `method_requested` is always populated, including when no aliasing
+  occurred, so downstream code can rely on the field existing.
+* **New regression test** pins both the structural behaviour (what is
+  recorded, what reaches metafor) and the numerical one: `"CO"` and
+  `"VC"` must produce identical `tau2`, `D2`, and cumulative `Z` to
+  `"HE"`. The 0.2.6.6 test asserting `"CO"` errors has been removed and
+  replaced with one asserting it does *not*.
+* `"GENQ"`/`"GENQM"` remain unsupported, unchanged and for the unchanged
+  reason: they require a user-supplied `weights` argument that
+  `tsa_hr()` does not collect. That part of the 0.2.6.6 finding was
+  correct and is not affected by the `"CO"` reversal.
+
+## Input-validation gaps closed
+
+* **Colliding column names after underscore normalisation are now
+  rejected.** Column headers have spaces replaced with underscores on
+  load, so a sheet containing both `Std Error` and `Std_Error` produced
+  two identically-named columns, after which `data$Std_Error` silently
+  resolved to whichever came first -- a wrong-column-used bug yielding a
+  plausible-looking but incorrect analysis with no error anywhere.
+  `tsa_hr()` now stops and names the offending columns instead of
+  guessing which was meant.
+* **`order_by` is normalised the same way as the column names.**
+  Previously, passing a header exactly as it reads in the user's
+  spreadsheet (`order_by = "Publication Year"`) failed with "not a
+  column in data" for a column that is plainly there, because matching
+  happened after normalisation. Both spaced and underscored forms now
+  work; documented in `?tsa_hr`.
+
+## Test coverage
+
+* **`order_by` sorting is now tested, not just its tied-value warning.**
+  The previous test only confirmed the warning fires; `order_by` could
+  have silently no-opped and only the warning path was covered. The new
+  test reverses a strictly-ordered dataset, sorts it back via
+  `order_by`, and requires identical `Study` order, `Z`, and
+  `info_fraction` to the already-sorted data. TSA is order-dependent, so
+  this is a reproducibility guarantee.
+
+## Wording corrections (no behaviour change)
+
+* The beta/futility engine is no longer described as a **"literal R
+  implementation"** of RTSA's inner-wedge algorithm. It follows RTSA's
+  algorithmic structure and indexing conventions, but adds
+  package-specific numerical safeguards RTSA has no need for
+  (`pmin(boundary, c_vec_alpha)`, dynamic grid sizing, a convergence
+  fallback, defensive `NA` handling, post-DARIS mapping onto the
+  definitive `t=1` boundary). It is now described as RTSA-derived and
+  adapted, with the open point stated plainly: no live multi-look RTSA
+  beta reference has yet been obtained, so numerical identity with RTSA
+  is not claimed. The engine itself is unchanged and remains frozen for
+  this release, as intended.
+* The `D2` comment's claim that D2 is **"mathematically bounded"** in
+  [0,1) is softened. D2 is bounded by definition, and
+  `var_random >= var_fixed` holds for essentially all of metafor's
+  estimators, but the computed value is a ratio of two separately
+  estimated variances -- which is precisely why the `max(0, .)` and the
+  0.999 cap exist rather than being redundant.
+
 # tsahr 0.2.6.6
 
 ## Bug fix: 3 of 13 advertised `method` values never worked, plus a documentation correction and several audit-driven improvements

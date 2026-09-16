@@ -283,9 +283,22 @@
 ## -------------------------------------------------------------------------
 ## RTSA / original CTU-TSA non-binding futility engine
 ##
-## This is a literal R implementation of the retrospective/analysis-mode
+## This is an R implementation ADAPTED FROM the retrospective/analysis-mode
 ## "inner wedge" algorithm supplied from RTSA's old TSA functions
-## ("translated from java").  It is deliberately used here instead of
+## ("translated from java"). It follows RTSA's algorithmic structure
+## (steps 1-6 below are RTSA's, in RTSA's order, with the same indexing
+## conventions) but is deliberately NOT a bit-for-bit transcription:
+## tsahr adds numerical safeguards and package-specific handling that
+## RTSA has no need for, including capping the futility boundary at the
+## corresponding alpha boundary (`pmin(boundary, c_vec_alpha)`), dynamic
+## grid sizing, a convergence fallback, defensive NA handling, and the
+## mapping of post-DARIS looks onto the definitive t=1 boundary. Those
+## are sensible additions for this package's use case, but they mean the
+## engine should be described as RTSA-derived/adapted rather than as
+## reproducing RTSA's numbers exactly -- no live multi-look RTSA beta
+## reference has yet been obtained to check the latter (see VALIDATION in
+## this file and inst/REVERSE_ENGINEERING_RTSA.md). It is deliberately
+## used here instead of
 ## rpact: tsahr is an observed-data / retrospective TSA application and
 ## this engine is the practical reference requested for that use case.
 ##

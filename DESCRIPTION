@@ -1,7 +1,7 @@
 Package: tsahr
 Type: Package
 Title: Trial Sequential Analysis for Meta-Analyses of Hazard Ratios
-Version: 0.2.6.6
+Version: 0.2.6.9
 Authors@R: person("Tarak", "Dhaouadi", email = "dhaouaditarak@yahoo.fr", role = c("aut", "cre"))
 Description: Performs Trial Sequential Analysis (TSA) for meta-analyses of
     time-to-event outcomes reported as hazard ratios. Implements the
@@ -19,6 +19,7 @@ Description: Performs Trial Sequential Analysis (TSA) for meta-analyses of
     <doi:10.1186/1471-2288-9-86>.
 License: MIT + file LICENSE
 Encoding: UTF-8
+RoxygenNote: 7.3.1
 Depends: R (>= 4.0.0)
 Imports: metafor, readxl, ggplot2, stats, utils
 Suggests: testthat (>= 3.0.0)
@@ -28,5 +29,4 @@ BugReports: https://github.com/tarak-dhaouadi/tsahr/issues
 NeedsCompilation: no
 Author: Tarak Dhaouadi [aut, cre]
 Maintainer: Tarak Dhaouadi <dhaouaditarak@yahoo.fr>
-Packaged: 2026-09-15 11:15:44 UTC; tarak
-Config/roxygen2/version: 8.1.0
+Packaged: 2026-09-16 00:00:00 UTC; tarak

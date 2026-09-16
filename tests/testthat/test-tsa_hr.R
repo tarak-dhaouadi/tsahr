@@ -38,12 +38,14 @@ test_that("invalid inputs are rejected", {
                        verbose = FALSE), "method must be one of")
   expect_error(tsa_hr(path, target_HR = 0.80, method = c("DL", "REML"),
                        verbose = FALSE), "single character string")
-  ## "CO" is not a recognised method string in current metafor at all
-  ## (despite appearing as a documented alias for "HE" in some older/
-  ## secondary sources) -- falls through to the generic invalid-method
-  ## error, same as any other unsupported string.
-  expect_error(tsa_hr(path, target_HR = 0.80, method = "CO",
-                       verbose = FALSE), "method must be one of")
+  ## "CO"/"VC" are metafor's documented aliases for the Hedges ("HE")
+  ## estimator, but are not accepted by every metafor version -- tsa_hr()
+  ## normalises them to "HE" itself (0.2.6.7) so they work regardless of
+  ## the installed metafor. They must therefore NOT error.
+  ## (0.2.6.6 incorrectly rejected "CO" outright; see NEWS.)
+  expect_no_error(suppressMessages(suppressWarnings(
+    tsa_hr(path, target_HR = 0.80, method = "CO", verbose = FALSE)
+  )))
   ## "GENQ"/"GENQM" ARE genuine metafor method strings, but require a
   ## user-supplied `weights` argument to metafor::rma() that tsa_hr()
   ## does not currently collect or pass through -- these get a specific,
@@ -94,10 +96,10 @@ test_that("method defaults to DL and accepts other metafor random-effects estima
 test_that("every advertised method value runs and returns a valid object", {
   ## Regression test for a real bug found (independently of the external
   ## audit that prompted this test's addition) while writing this exact
-  ## test: tsa_hr() previously advertised 13 method values, but 3 of them
-  ## never actually worked -- "CO" is not a recognised metafor method
-  ## string at all, and "GENQ"/"GENQM" require a `weights` argument that
-  ## tsa_hr() doesn't collect. This went unnoticed because only DL/REML/
+  ## test: tsa_hr() previously advertised 13 method values, but some of
+  ## them never actually worked -- "GENQ"/"GENQM" require a `weights`
+  ## argument that tsa_hr() doesn't collect. This went unnoticed because
+  ## only DL/REML/
   ## ML were ever tested. This test exercises every method value tsa_hr()
   ## currently advertises as supported (see `valid_methods` in
   ## R/tsa_hr.R), so a similar gap can't recur silently -- it doesn't
@@ -320,6 +322,67 @@ test_that("order_by warns on tied values", {
   )
 })
 
+test_that("order_by actually determines the cumulative order", {
+  ## Complements the tied-values warning test above: that one checks the
+  ## warning fires, this one checks the SORTING itself is real. Without
+  ## this, order_by could silently no-op and only the warning path would
+  ## be covered. TSA is order-dependent, so this is a reproducibility
+  ## guarantee, not a cosmetic one.
+  path <- tsahr_example_data()
+  d <- as.data.frame(readxl::read_excel(path))
+  d$Year <- seq_len(nrow(d)) + 1990L  ## strictly increasing, no ties
+
+  ## Shuffle deterministically, then ask tsa_hr() to restore order via
+  ## order_by; result must match the already-sorted data analysed with
+  ## no order_by at all.
+  shuffled <- d[rev(seq_len(nrow(d))), , drop = FALSE]
+
+  a <- suppressMessages(suppressWarnings(
+    tsa_hr(shuffled, target_HR = 0.80, order_by = "Year", verbose = FALSE)
+  ))
+  b <- suppressMessages(suppressWarnings(
+    tsa_hr(d, target_HR = 0.80, verbose = FALSE)
+  ))
+
+  expect_identical(as.character(a$cumulative$Study),
+                   as.character(b$cumulative$Study))
+  expect_equal(a$cumulative$Z, b$cumulative$Z)
+  expect_equal(a$cumulative$info_fraction, b$cumulative$info_fraction)
+})
+
+test_that("order_by accepts the original spaced column name", {
+  ## 0.2.6.7: column names have spaces replaced with underscores on
+  ## load, so a user passing the header exactly as it reads in their
+  ## spreadsheet would previously hit a "not found" error for a column
+  ## that is visibly present. order_by is now normalised the same way.
+  path <- tsahr_example_data()
+  d <- as.data.frame(readxl::read_excel(path))
+  d$`Publication Year` <- seq_len(nrow(d)) + 1990L
+
+  expect_no_error(suppressMessages(suppressWarnings(
+    tsa_hr(d, target_HR = 0.80, order_by = "Publication Year",
+           verbose = FALSE)
+  )))
+  ## The underscored form must keep working too.
+  expect_no_error(suppressMessages(suppressWarnings(
+    tsa_hr(d, target_HR = 0.80, order_by = "Publication_Year",
+           verbose = FALSE)
+  )))
+})
+
+test_that("column names that collide after underscore normalisation are rejected", {
+  ## 0.2.6.7: "Std Error" and "Std_Error" both normalise to "Std_Error",
+  ## after which data$Std_Error silently resolves to whichever came
+  ## first -- a wrong-column bug producing a plausible but incorrect
+  ## analysis with no error. Must be refused, not guessed at.
+  path <- tsahr_example_data()
+  d <- as.data.frame(readxl::read_excel(path))
+  d$`Std Error` <- d$Std_Error * 2  ## collides with existing Std_Error
+
+  expect_error(tsa_hr(d, target_HR = 0.80, verbose = FALSE),
+               "not unique after spaces")
+})
+
 test_that("target_HR near the null value of 1 triggers a warning, not an error", {
   path <- tsahr_example_data()
   expect_warning(
@@ -486,4 +549,128 @@ test_that("non-integer event/sample-size counts are rejected", {
   bad <- base; bad$Events_Treatment[1] <- 50.5
   expect_error(tsa_hr(bad, target_HR = 0.8, verbose = FALSE),
                "whole numbers")
+})
+
+test_that("method aliases CO and VC are normalised to HE", {
+  ## 0.2.6.7. metafor documents "CO" (Cochran) and "VC" (variance
+  ## component) as alternative names for the Hedges ("HE") estimator,
+  ## selectable via those strings -- but that alias is not accepted by
+  ## every metafor version (older releases reject a bare "CO" with
+  ## "Unknown 'method' specified"). tsa_hr() therefore normalises them
+  ## itself, so behaviour does not depend on which metafor is installed.
+  ##
+  ## This test pins the normalisation both structurally (what gets
+  ## recorded and what gets passed to metafor) and NUMERICALLY (the
+  ## alias must give bit-for-bit the same analysis as "HE" -- these are
+  ## the same estimator, so any divergence is a bug).
+  path <- tsahr_example_data()
+
+  res_he <- suppressMessages(suppressWarnings(
+    tsa_hr(path, target_HR = 0.80, method = "HE", verbose = FALSE)
+  ))
+
+  for (alias in c("CO", "VC")) {
+    res_alias <- suppressMessages(suppressWarnings(
+      tsa_hr(path, target_HR = 0.80, method = alias, verbose = FALSE)
+    ))
+
+    ## Normalised string is what actually reaches metafor...
+    expect_identical(res_alias$parameters$method, "HE",
+                     info = paste("alias =", alias))
+    expect_identical(res_alias$res_re$method, "HE",
+                     info = paste("alias =", alias))
+    ## ...but what the caller asked for is still recorded, so the
+    ## normalisation is auditable rather than silent.
+    expect_identical(res_alias$parameters$method_requested, alias,
+                     info = paste("alias =", alias))
+
+    ## Same estimator => identical numbers.
+    expect_equal(res_alias$heterogeneity$tau2, res_he$heterogeneity$tau2,
+                 info = paste("alias =", alias))
+    expect_equal(res_alias$heterogeneity$D2, res_he$heterogeneity$D2,
+                 info = paste("alias =", alias))
+    expect_equal(res_alias$cumulative$Z, res_he$cumulative$Z,
+                 info = paste("alias =", alias))
+  }
+
+  ## A non-alias method must still record method_requested == method,
+  ## so downstream code can rely on the field always being present.
+  expect_identical(res_he$parameters$method_requested, "HE")
+})
+
+test_that("circularity_warning reflects circularity itself, not severity", {
+  ## 0.2.6.8. Before this, `circularity_warning` carried the *severe*
+  ## condition (circular AND accrued events > 3x DARIS), while
+  ## summary.tsa_hr() printed a message worded for the *general* case
+  ## ("target_HR was not specified... This is circular"). A circular
+  ## analysis that hadn't blown past 3x DARIS therefore reported no
+  ## circularity at all, contradicting ?tsa_hr, which correctly states
+  ## that any RIS from the observed pooled effect is circular.
+  path <- tsahr_example_data()
+
+  ## target_HR = NA => circular by construction, regardless of how much
+  ## information accrued.
+  res_circ <- suppressMessages(suppressWarnings(
+    tsa_hr(path, target_HR = NA, verbose = FALSE)
+  ))
+  expect_true(res_circ$information_size$circularity_warning)
+
+  ## A pre-specified target_HR is never circular, and never severe.
+  res_spec <- suppressMessages(suppressWarnings(
+    tsa_hr(path, target_HR = 0.80, verbose = FALSE)
+  ))
+  expect_false(res_spec$information_size$circularity_warning)
+  expect_false(res_spec$information_size$circularity_severe)
+
+  ## Both flags always present, and severe implies warning (never the
+  ## reverse) -- the two must not drift apart again.
+  expect_true(is.logical(res_circ$information_size$circularity_severe))
+  expect_length(res_circ$information_size$circularity_severe, 1L)
+  if (isTRUE(res_circ$information_size$circularity_severe)) {
+    expect_true(res_circ$information_size$circularity_warning)
+  }
+})
+
+test_that("summary() reports circularity whenever target_HR is unspecified", {
+  ## Companion to the test above, at the user-visible layer: the note
+  ## must appear for ANY circular analysis, not only severe ones.
+  path <- tsahr_example_data()
+  res <- suppressMessages(suppressWarnings(
+    tsa_hr(path, target_HR = NA, verbose = FALSE)
+  ))
+  expect_output(summary(res), "circular")
+
+  res_spec <- suppressMessages(suppressWarnings(
+    tsa_hr(path, target_HR = 0.80, verbose = FALSE)
+  ))
+  out <- capture.output(summary(res_spec))
+  expect_false(any(grepl("circular", out, fixed = TRUE)))
+})
+
+test_that("non-numeric input columns are diagnosed as a type problem", {
+  ## 0.2.6.8: is.finite() on a character column returns all-FALSE rather
+  ## than erroring, so a column read in as text previously surfaced as
+  ## "found NA/NaN/Inf" -- a misleading diagnosis of a type problem.
+  path <- tsahr_example_data()
+  d <- as.data.frame(readxl::read_excel(path))
+  ## The example sheet stores several headers with spaces ("Events
+  ## Treatment"), which tsa_hr() normalises on load. Do the same here so
+  ## these tests address columns by their post-normalisation names and
+  ## don't silently target a NULL column.
+  names(d) <- gsub(" ", "_", names(d))
+
+  d_chr <- d
+  d_chr$Events_Treatment <- as.character(d_chr$Events_Treatment)
+  expect_error(tsa_hr(d_chr, target_HR = 0.80, verbose = FALSE),
+               "must be numeric")
+
+  d_se <- d
+  d_se$Std_Error <- as.character(d_se$Std_Error)
+  expect_error(tsa_hr(d_se, target_HR = 0.80, verbose = FALSE),
+               "must be numeric")
+
+  ## Genuinely numeric data must still pass this gate.
+  expect_no_error(suppressMessages(suppressWarnings(
+    tsa_hr(d, target_HR = 0.80, verbose = FALSE)
+  )))
 })

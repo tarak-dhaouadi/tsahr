@@ -27,9 +27,13 @@ print.tsa_hr <- function(x, ...) {
 #' @export
 summary.tsa_hr <- function(object, ...) {
   print(object$summary_table, row.names = FALSE)
-  if (object$information_size$circularity_warning) {
+  if (isTRUE(object$information_size$circularity_warning)) {
     cat("\nNOTE: target_HR was not specified, so the observed pooled HR was used\n")
     cat("for the required information size. This is circular -- see ?tsa_hr.\n")
+    if (isTRUE(object$information_size$circularity_severe)) {
+      cat("Accrued events also greatly exceed the resulting DARIS, so the TSA\n")
+      cat("boundary will collapse to the conventional boundary almost immediately.\n")
+    }
   }
   invisible(object$summary_table)
 }
