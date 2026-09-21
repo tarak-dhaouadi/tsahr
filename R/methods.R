@@ -11,10 +11,29 @@ print.tsa_hr <- function(x, ...) {
   cat(sprintf("Pooled HR (random effects): %.3f\n", exp(x$res_re$b)))
   cat(sprintf("Anticipated HR (RIS calc): %.3f\n", x$parameters$HR_anticipated))
   cat(sprintf("Theoretical DARIS event-equivalent: %d\n", ceiling(x$information_size$DARIS_events)))
+  analysis_route <- identical(x$settings$route_used, "analysis")
+  daris_reached  <- if (is.null(x$results$daris_reached)) x$results$final_reached else x$results$daris_reached
   cat(sprintf("Crossed TSA boundary: %s | Entered futility region: %s | DARIS information reached: %s\n",
               ifelse(x$results$crossed_tsa, "YES", "NO"),
               ifelse(x$results$entered_futility_region, "YES", "NO"),
-              ifelse(x$results$final_reached, "YES", "NO")))
+              ifelse(daris_reached, "YES", "NO")))
+  if (analysis_route) {
+    cat(sprintf("Boundary route: RTSA analysis | Analysis-route endpoint (%.3f x DARIS) reached: %s\n",
+                x$settings$route_endpoint,
+                ifelse(x$results$final_reached, "YES", "NO")))
+  }
+  if (isTRUE(x$results$final_reached)) {
+    cat(sprintf("Definitive look crossed the efficacy boundary: %s\n",
+                ifelse(isTRUE(x$results$final_crossed_efficacy), "YES", "NO")))
+  }
+  if (identical(x$settings$fallback_route, "design")) {
+    cat("\n*** NOTE: boundary_route = \"analysis\" FAILED; the results shown are the\n")
+    cat("    DESIGN-route (RTSA-derived) result -- see settings$fallback_reason. ***\n")
+  }
+  if (identical(x$beta_engine$engine, "legacy_r_fallback")) {
+    cat("\n*** WARNING: boundaries computed with the LEGACY, APPROXIMATE fallback\n")
+    cat("    engine (the RTSA-derived engine failed) -- NOT comparable with RTSA. ***\n")
+  }
   cat("\nUse summary() for the full results table, or plot() for the TSA chart.\n")
   invisible(x)
 }
@@ -27,6 +46,14 @@ print.tsa_hr <- function(x, ...) {
 #' @export
 summary.tsa_hr <- function(object, ...) {
   print(object$summary_table, row.names = FALSE)
+  if (identical(object$settings$fallback_route, "design")) {
+    cat("\n*** NOTE: boundary_route = \"analysis\" FAILED; the results shown are the\n")
+    cat("    DESIGN-route (RTSA-derived) result -- see settings$fallback_reason. ***\n")
+  }
+  if (identical(object$beta_engine$engine, "legacy_r_fallback")) {
+    cat("\n*** WARNING: boundaries computed with the LEGACY, APPROXIMATE fallback\n")
+    cat("    engine (the RTSA-derived engine failed) -- NOT comparable with RTSA. ***\n")
+  }
   if (isTRUE(object$information_size$circularity_warning)) {
     cat("\nNOTE: target_HR was not specified, so the observed pooled HR was used\n")
     cat("for the required information size. This is circular -- see ?tsa_hr.\n")
@@ -116,6 +143,16 @@ plot.tsa_hr <- function(x, legend = TRUE, caption = TRUE,
   DARIS_events <- x$information_size$DARIS_events
   DARIS_info_threshold_events <- x$information_size$DARIS_info_threshold_events
   final_reached <- x$results$final_reached
+  ## 0.2.7.14: DARIS (t = 1) and the route endpoint are separate quantities.
+  ## For boundary_route = "design" they coincide (route endpoint == DARIS)
+  ## and the plot is unchanged; for "analysis" the formal endpoint is
+  ## design_R * DARIS and gets its own, separately labelled marker.
+  daris_reached <- if (is.null(x$results$daris_reached)) final_reached else x$results$daris_reached
+  analysis_route <- identical(x$settings$route_used, "analysis")
+  route_endpoint <- if (is.null(x$settings$route_endpoint)) 1 else x$settings$route_endpoint
+  route_endpoint_events <- x$information_size$route_endpoint_events
+  show_endpoint_marker <- analysis_route && isTRUE(final_reached) &&
+    !is.null(route_endpoint_events) && !is.na(route_endpoint_events)
 
   ## Two distinct quantities are shown on the plot, deliberately NOT
   ## conflated into a single "DARIS events" figure:
@@ -132,7 +169,7 @@ plot.tsa_hr <- function(x, legend = TRUE, caption = TRUE,
   ##     it says YES, this second marker is shown at (or before) the
   ##     accrued-events point; whenever it says NO, only the theoretical
   ##     line (1) is shown, clearly labelled as not yet reached.
-  show_info_threshold_marker <- final_reached && !is.na(DARIS_info_threshold_events)
+  show_info_threshold_marker <- daris_reached && !is.na(DARIS_info_threshold_events)
 
   z_alpha <- x$information_size$z_alpha
   D2 <- x$heterogeneity$D2
@@ -164,7 +201,8 @@ plot.tsa_hr <- function(x, legend = TRUE, caption = TRUE,
   events_accrued <- x$results$events_accrued
   x_max <- max(c(cumul_df$cum_events,
                   if (show_theoretical_daris) DARIS_events else NA,
-                  if (show_info_threshold_marker) DARIS_info_threshold_events else NA),
+                  if (show_info_threshold_marker) DARIS_info_threshold_events else NA,
+                  if (show_endpoint_marker) route_endpoint_events else NA),
                na.rm = TRUE) * 1.15
 
   alpha_lines <- data.frame(
@@ -271,15 +309,38 @@ plot.tsa_hr <- function(x, legend = TRUE, caption = TRUE,
                          color = "grey35")
   }
 
+  ## Analysis route only: the formal analysis endpoint (design_R x DARIS
+  ## information), estimated by interpolation between looks. Drawn
+  ## separately from the DARIS marker above so the two are never conflated.
+  if (show_endpoint_marker) {
+    p <- p +
+      ggplot2::geom_vline(xintercept = route_endpoint_events, color = "purple4",
+                           linetype = "longdash", linewidth = 0.6) +
+      ggplot2::annotate("text",
+                         x = route_endpoint_events,
+                         y = y_limit * 0.58,
+                         label = paste0("Analysis-route endpoint (",
+                                        sprintf("%.3f", route_endpoint),
+                                        " x DARIS) reached ~ ",
+                                        ceiling(route_endpoint_events), " events (est.)"),
+                         hjust = -0.05, vjust = 0, size = info_threshold_label_size,
+                         color = "purple4")
+  }
+
   if (caption) {
     methods_caption <- sprintf(
       paste0("Methods: Random-effects (%s) model, allocation psi = %.3f\n",
              "Alpha spending: O'Brien-Fleming-type (asOF); ",
-             "Non-binding futility: RTSA retrospective inner-wedge algorithm, ",
-             "O'Brien-Fleming-type beta-spending (bsOF)\n",
+             "Non-binding futility: RTSA-reconstructed recursive-integration ",
+             "engine, O'Brien-Fleming-type beta-spending (bsOF)\n",
              "alpha = %.0f%% (two-sided), power = %.0f%% | Diversity D\u00b2 = %.0f%%, Adjustment factor = %.2f"),
       .tsahr_method_label(if (is.null(x$parameters$method)) "DL" else x$parameters$method),
       allocation_p_used, alpha_two_sided * 100, power * 100, D2 * 100, AF)
+    if (analysis_route) {
+      methods_caption <- paste0(methods_caption, sprintf(
+        "\nBoundary route: RTSA analysis (formal endpoint = %.3f x DARIS information)",
+        route_endpoint))
+    }
     p <- p + ggplot2::labs(caption = methods_caption) +
       ggplot2::theme(plot.caption = ggplot2::element_text(
         hjust = 0, size = caption_size, face = caption_face))

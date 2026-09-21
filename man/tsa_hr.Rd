@@ -4,7 +4,8 @@
 \usage{
 tsa_hr(data, alpha_two_sided = 0.05, power = 0.80,
   allocation_source = c("data", "manual"), allocation_p = 0.5,
-  target_HR = NA_real_, method = "DL", order_by = NULL, verbose = TRUE)
+  target_HR = NA_real_, method = "DL", order_by = NULL, verbose = TRUE,
+  boundary_route = c("design", "analysis"), legacy_fallback = TRUE)
 }
 \arguments{
 \item{data}{A data.frame, or a path to an .xlsx file, containing one row
@@ -95,6 +96,25 @@ column came first.}
 
 \item{verbose}{Logical; print analysis details to the console as the
 function runs. Default \code{TRUE}.}
+
+\item{boundary_route}{Character string, one of \code{"design"} (default)
+or \code{"analysis"}, selecting which of RTSA's two retrospective
+boundary-computation routes to use. \code{"design"} computes alpha and
+beta boundaries directly on the observed information-fraction timeline
+with no inflation (DARIS reached at \code{info_fraction = 1}).
+\code{"analysis"} first solves an inflation factor \code{design_R} (RTSA's
+own \code{RTSA(type = "analysis", design = NULL)} route) and moves the
+formal endpoint to \code{design_R * DARIS} instead -- this changes the
+"DARIS reached" verdict, the plotted endpoint, and every field in
+\code{results}, not just the futility numbers. See Details, "Retrospective
+boundary timeline".}
+
+\item{legacy_fallback}{Logical, default \code{TRUE}. If the compiled
+RTSA-derived boundary engine fails, \code{TRUE} falls back to the legacy,
+pre-0.2.7.11 R-only approximate engine with an immediate warning (not
+RTSA-comparable); \code{FALSE} instead stops \code{tsa_hr()} with an error
+(strict fail-closed behaviour, appropriate when the result will be
+reported as RTSA-equivalent).}
 }
 \value{
 An object of class \code{"tsa_hr"}: a list containing the fitted
@@ -122,8 +142,17 @@ horizon -- and \code{entered_futility_region}, see the caveat under
 "Retrospective boundary timeline" below; a \code{TRUE} value at the
 DARIS-reaching look reflects a comparison against the definitive
 \code{t=1} futility boundary, not an interim one, and is not itself a
-formal stopping recommendation), and a summary data frame. Use
-\code{plot()}, \code{summary()}, or \code{print()} on the result.
+formal stopping recommendation; the definitive-look fields
+\code{final_crossed_efficacy}, \code{final_non_efficacy} and
+\code{final_entered_futility_region}, plus \code{daris_reached} and
+\code{final_reached} -- see "Decision fields" under Details), a
+\code{settings} list recording \code{boundary_route}, \code{route_used},
+\code{legacy_fallback}, \code{fallback_used}, \code{fallback_route},
+\code{fallback_reason}, the resolved \code{route_endpoint} (\code{1} for
+\code{"design"}, \code{design_R} for \code{"analysis"}),
+\code{route_endpoint_info} and \code{used_legacy_engine}, and a summary data
+frame. Use \code{plot()}, \code{summary()}, or \code{print()} on the
+result.
 }
 \description{
 Performs a Trial Sequential Analysis (TSA) for a meta-analysis of
@@ -156,33 +185,117 @@ the displayed monitoring boundaries should therefore be regarded as an
 approximation (as in the official Copenhagen Trial Unit TSA software),
 not an exact result.
 
+\strong{Boundary engine:} since 0.2.7.11 the alpha (efficacy) and
+non-binding beta (futility) boundaries are computed by compiled C++ code
+ported from RTSA's own recursive-integration engine and driven through
+RTSA's \code{boundaries(side = 2, futility = "non-binding", type =
+"design")} steps: alpha bounds on the (\code{t < 1}, \code{1}) timeline,
+then the two-pass information-scale root search whose target is the
+alpha recursion's own final efficacy bound at \code{t = 1} (not
+\code{qnorm(1 - alpha/2)}). Early looks whose futility spend is suppressed
+by that search are returned as \code{NA}. A C++ compiler is therefore
+required to install the package from source.
+
 \strong{Retrospective boundary timeline:} the observed cumulative
 Z-curve continues through every included study, but the formal alpha
-and beta boundaries follow the RTSA retrospective convention: observed
+and beta boundaries follow a design pass applied to the observed
+information fractions (in the manner of RTSA): observed
 looks are retained only while \code{info_fraction < 1}, followed by one
 synthetic final-analysis point at \code{t = 1} (HARIS/DARIS). Boundaries
 are not continued through studies occurring after DARIS. The synthetic
 point is stored in \code{boundary_timeline}; the observed-study rows in
 \code{cumulative} have boundary values set to \code{NA} at and after
 DARIS. Formal crossing/futility decisions are evaluated only through the
-first observed look reaching DARIS, using the definitive \code{t = 1}
-boundary. In particular, \code{results$entered_futility_region} at that
-look reflects a comparison against the FINAL futility boundary, which by
-the RTSA retrospective convention is the conventional two-sided alpha
-critical value at the definitive analysis (\code{qnorm(1 - alpha/2)},
-e.g. 1.959964 for a two-sided alpha of 0.05) -- NOT the final efficacy
-boundary, which is instead the (generally larger) sequentially-adjusted
-O'Brien-Fleming-type value at \code{t = 1}. The two are typically
-different: the RTSA retrospective branch computes
-\code{min(qnorm(1 - alpha/2), <final efficacy boundary>)}, and since the
-sequentially-adjusted efficacy boundary at \code{t = 1} is virtually
-always at or above the conventional critical value, this normally
-resolves to the conventional value itself. A \code{TRUE} value for
-\code{entered_futility_region} at that look therefore means the
-definitive analysis did not reach the conventional two-sided
-significance threshold, not that a formal interim futility stop was
-triggered, and not that the analysis fell short of the (higher)
-efficacy boundary specifically.
+first observed look reaching the route endpoint (DARIS for
+\code{boundary_route = "design"}; \code{design_R * DARIS} for
+\code{"analysis"}), using the definitive boundary at that endpoint.
+
+\strong{Decision fields: "at any formal look" versus "at the definitive
+look" (0.2.7.14).} \code{results} reports two families of fields that
+answer different questions:
+\describe{
+  \item{At ANY formal look}{\code{crossed_tsa} and
+    \code{entered_futility_region} are \code{TRUE} if the cumulative
+    Z-curve crossed the efficacy boundary (respectively lay inside the
+    futility region) at any look up to and including the definitive one.
+    A trial that crossed efficacy at an interim look keeps
+    \code{crossed_tsa = TRUE} even if the definitive look then fell back
+    below the boundary.}
+  \item{At the DEFINITIVE look}{\code{final_crossed_efficacy},
+    \code{final_non_efficacy} (= \code{!final_crossed_efficacy}) and
+    \code{final_entered_futility_region} refer ONLY to the first look
+    reaching the route endpoint (\code{results$final_tsa_look}) and are
+    \code{NA} when that endpoint has not been reached. Version 0.2.7.13
+    defined \code{final_non_efficacy} as \code{!crossed_tsa}, which means
+    "never crossed at any look" rather than "the definitive look did not
+    cross"; this was corrected in 0.2.7.14.}
+}
+At the definitive look the futility boundary equals the final efficacy
+boundary (as in RTSA's design pass, where the two are calibrated to meet
+there; e.g. about 2.1-2.2 rather than 1.959964 for a two-sided alpha of
+0.05 with many looks), so \code{final_entered_futility_region} is the
+complement of \code{final_crossed_efficacy} (both are \code{TRUE} only at
+|Z| exactly equal to the boundary). It merely says that the Z-curve did
+not reach the final efficacy boundary; it is not a formal interim
+futility stop, and neither family of fields is a recommendation to stop a
+trial. (Versions 0.2.6.x-0.2.7.11 used \code{min(qnorm(1 - alpha/2),
+<final efficacy boundary>)} as the final futility boundary.)
+
+\strong{Route endpoint versus DARIS (0.2.7.13/0.2.7.14).}
+\code{boundary_route} picks between direct ports of RTSA's two
+retrospective boundary computations:
+\describe{
+  \item{\code{"design"} (default)}{\code{RTSA::boundaries(type =
+    "design")}: alpha and beta boundaries are computed directly on the
+    observed information-fraction timeline (looks below \code{t = 1} plus
+    one synthetic \code{t = 1} point), with NO further inflation. The
+    formal endpoint is DARIS itself (\code{info_fraction = 1}), matching
+    this package's stated RIS/DARIS definition and the values validated
+    against RTSA's design pass.}
+  \item{\code{"analysis"}}{\code{RTSA::RTSA(type = "analysis", design =
+    NULL)}: a design pass first solves an inflation factor
+    (\code{design_R}) so that the design's own futility and efficacy
+    boundaries meet at its final look; the boundaries returned are then
+    recomputed on the timeline scaled by \code{design_R}, and the efficacy
+    boundaries change as well as the futility ones (alpha is respent on
+    \code{t / design_R}). The formal endpoint becomes \code{design_R *
+    DARIS}, not DARIS. This is RTSA's own inflated-sequential-design
+    convention, not the no-inflation convention of the Copenhagen Trial
+    Unit's TSA software.}
+}
+DARIS and the route endpoint are reported separately and never conflated:
+\code{results$daris_reached} and
+\code{information_size$DARIS_info_threshold_events} always refer to DARIS
+itself, whereas \code{results$final_reached},
+\code{information_size$route_endpoint_info} and
+\code{information_size$route_endpoint_events} refer to the route endpoint
+(identical to DARIS for \code{"design"}). For \code{"analysis"} the
+printed output, summary table and plot call the endpoint "analysis-route
+endpoint (x.xxx x DARIS)" and never "DARIS". Both routes share the same
+compiled recursion (\code{src/rtsa_core.h}); only the orchestration
+differs.
+
+\strong{Fallbacks (0.2.7.14).} \code{settings$route_used}
+(\code{"design"}, \code{"analysis"} or \code{"legacy"}),
+\code{settings$fallback_used}, \code{settings$fallback_route}
+(\code{"none"}, \code{"design"} or \code{"legacy"}) and
+\code{settings$fallback_reason} record programmatically what actually
+produced the boundaries. \code{"design"}: \code{boundary_route =
+"analysis"} failed and the RTSA-derived design-route result is returned;
+\code{"legacy"}: the RTSA-derived engine failed and the legacy,
+approximate R-only engine was used. Both are announced by warnings and,
+for \code{"legacy"}, a banner in \code{print()}/\code{summary()}. For
+confirmatory or RTSA-parity work use \code{legacy_fallback = FALSE}, which
+makes either failure an error.
+
+\strong{Numerical diagnostics.} The compiled engine warns when a boundary
+search converged only within a loose tolerance, when an integration grid
+collapsed to a degenerate interval, and -- with a separate, more alarming
+warning -- when an integration interval was REVERSED (lower wall above the
+upper wall), a state RTSA's own code would have stopped on and which
+invalidates the boundaries from that look onward. Diagnostics are
+reported for the converged passes, not for the transient candidate
+information scales tried inside the root searches.
 }
 \examples{
 \donttest{

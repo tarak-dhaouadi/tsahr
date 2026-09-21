@@ -19,15 +19,17 @@ what this package specifically contributes:
 - **inverse-variance information** based on each study's own reported
   log-HR standard error (`sum(1/SE^2)`), used as the accrued-information
   measure instead of a simpler event-count approximation,
-- a self-contained recursive numerical integration engine for the
-  O'Brien-Fleming-type alpha- and beta-spending boundaries (no external
-  group-sequential-design package, and no artificial limit on the number
-  of included studies) -- see `?tsa_hr` and the package source
-  (`R/obf_boundaries.R`) for the validation performed on this engine
-  (an independent match to the published exact O'Brien-Fleming
-  constant, plus Monte Carlo confirmation of nominal type-I error
-  control across several look-count and information-schedule
-  configurations),
+- a compiled (C++) recursive numerical integration engine, ported from
+  RTSA, for the O'Brien-Fleming-type alpha- and beta-spending boundaries
+  (no external group-sequential-design package, and no fixed
+  software-imposed limit on the number of looks, subject to available
+  computational resources) -- see `?tsa_hr`, `src/rtsa_core.h` and
+  `inst/REVERSE_ENGINEERING_RTSA.md`. The earlier R-only engine
+  (`R/obf_boundaries.R`; validated against the published exact
+  O'Brien-Fleming constant plus Monte Carlo type-I error control) is kept
+  only as an opt-in fallback (`legacy_fallback`), clearly flagged in the
+  result whenever it is used; use `legacy_fallback = FALSE` for
+  confirmatory or RTSA-parity work,
 - applying this monitoring framework to a **cumulative random-effects**
   meta-analysis Z-curve -- see the Caveats section below, this is an
   approximation shared with the official Copenhagen Trial Unit TSA

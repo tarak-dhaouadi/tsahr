@@ -159,7 +159,10 @@ test_that("internal OF alpha boundary is consistent with the classical O'Brien-F
   expect_true(all(diff(c5) < 0))  # boundaries should be strictly decreasing
 })
 
-test_that("boundary engine scales to many studies (no kMax limit)", {
+test_that("LEGACY R-only boundary engine scales to many studies (no kMax limit)", {
+  ## This tests the legacy pure-R engine (.obf_*), kept as tsa_hr()'s
+  ## fallback. The current compiled engine's many-look behaviour is tested
+  ## in test-robust-schedules.R.
   set.seed(1)
   n <- 40
   t40 <- sort(unique(c(seq(0.02, 1, length.out = n - 1), 1)))
@@ -167,17 +170,24 @@ test_that("boundary engine scales to many studies (no kMax limit)", {
   expect_no_error(b40 <- tsahr:::.obf_beta_boundary(t40, alpha = 0.05, beta = 0.2,
                                                      c_vec_alpha = c40))
   expect_equal(length(c40), length(t40))
-  ## As of the RTSA-matched beta engine, the final look's futility
-  ## boundary is deliberately set to the definitive two-sided alpha
-  ## quantile (qnorm(1-alpha/2)) rather than NA: at a genuinely final,
-  ## definitive analysis there is no distinct "non-binding early stop for
-  ## futility" separate from the main efficacy decision, matching RTSA's
-  ## convention (see .rtsa_beta_boundary(), the non-over-powered branch).
-  ## This replaced the earlier (pre-RTSA-match) convention of leaving the
-  ## final look as NA -- verified directly against the current code
-  ## (obf_boundaries.R: `b[length(b)] <- stats::qnorm(1 - alpha / 2, ...)`
-  ## in the branch taken here, since max(t40)==1 exactly, not >1).
-  expect_equal(b40[length(b40)], stats::qnorm(1 - 0.05 / 2), tolerance = 1e-8)
+  ## LEGACY engine convention: the final look's futility boundary equals
+  ## the TRUE, schedule-dependent final alpha (efficacy) boundary --
+  ## .rtsa_beta_boundary() recomputes this itself via .obf_alpha_boundary()
+  ## on timing_beta = sort(unique(c(t[t<1], 1))) (obf_boundaries.R), which
+  ## for this t40 (already sorted, unique, ending in an exact 1) is t40
+  ## itself -- so the expected value is exactly c40's own last entry,
+  ## already computed above, not a fixed constant.
+  ##
+  ## ** FIXED in 0.2.7.20. ** This used to assert the OLD, WRONG constant
+  ## stats::qnorm(1 - alpha/2) = 1.96 here, on the assumption (itself fixed
+  ## in 0.2.7.19) that RTSA's discretised final boundary always equals that
+  ## continuous-limit value. It doesn't -- for this exact 40-look schedule
+  ## the true value is materially different (~2.16) -- so this test was
+  ## encoding the same bug .rtsa_beta_boundary() itself was fixed to stop
+  ## making, and started failing (correctly) the moment that production fix
+  ## landed. Asserting against c40's own last entry instead means this test
+  ## can never re-encode a hardcoded assumption about what that value is.
+  expect_equal(b40[length(b40)], c40[length(c40)], tolerance = 1e-8)
 })
 
 test_that("tsa_hr runs end-to-end on a large (40-study) synthetic dataset", {

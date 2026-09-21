@@ -11,4 +11,5 @@ export(tsahr_example_data)
 
 importFrom(stats, qnorm)
 importFrom(utils, globalVariables)
-
+importFrom(Rcpp, sourceCpp)
+useDynLib(tsahr, .registration = TRUE)

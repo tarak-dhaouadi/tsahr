@@ -120,6 +120,29 @@
 #' @param verbose Logical; print analysis details to the console as the
 #'   function runs (mirrors the diagnostic output of the original script).
 #'   Default \code{TRUE}.
+#' @param boundary_route Character string, one of \code{"design"} (default)
+#'   or \code{"analysis"}, selecting which of RTSA's two retrospective
+#'   boundary-computation routes to use. See "Retrospective boundary
+#'   timeline" under Details for what each computes and, for
+#'   \code{"analysis"}, how it changes the formal endpoint, the "DARIS
+#'   reached" verdict, and every decision field in \code{results} --
+#'   this is more than swapping out the futility numbers.
+#' @param legacy_fallback Logical, default \code{TRUE}. Governs what
+#'   happens if the compiled RTSA-derived boundary engine fails to produce
+#'   a result for the requested design (e.g. no root bracket exists for an
+#'   unusual information-fraction schedule). When \code{TRUE} (the
+#'   default), \code{tsa_hr()} falls back to the legacy, pre-0.2.7.11
+#'   R-only approximate engine, with an immediate warning and a visible
+#'   banner in \code{print()}/\code{summary()} output, and marks the
+#'   result (\code{beta_engine$engine == "legacy_r_fallback"}) so the
+#'   fallback is never silent -- but it IS a fallback: a caller who wraps
+#'   the call in \code{suppressWarnings()} will not see it, and the
+#'   returned boundaries are not RTSA-comparable when this happens. Set
+#'   \code{legacy_fallback = FALSE} for strict fail-closed behaviour: an
+#'   engine failure then stops \code{tsa_hr()} with an error instead of
+#'   silently substituting the approximate engine, appropriate when the
+#'   result will be reported as RTSA-equivalent and an unnoticed fallback
+#'   would be worse than a hard stop.
 #'
 #' @details
 #' **Circularity caution:** using the observed pooled effect
@@ -150,25 +173,99 @@
 #' continued through studies occurring after DARIS. The synthetic point is
 #' stored in \code{boundary_timeline}; the observed-study rows in
 #' \code{cumulative} have boundary values set to \code{NA} at and after
-#' DARIS. Formal crossing/futility decisions are evaluated only through the
-#' first observed look reaching DARIS, using the definitive \code{t = 1}
-#' boundary. In particular, \code{results$entered_futility_region} at that
-#' look reflects a comparison against the FINAL futility boundary, which by
-#' the RTSA retrospective convention is the conventional two-sided alpha
-#' critical value at the definitive analysis (\code{qnorm(1 - alpha/2)},
-#' e.g. 1.959964 for a two-sided alpha of 0.05) -- NOT the final efficacy
-#' boundary, which is instead the (generally larger) sequentially-adjusted
-#' O'Brien-Fleming-type value at \code{t = 1}. The two are typically
-#' different: the RTSA retrospective branch computes
-#' \code{min(qnorm(1 - alpha/2), <final efficacy boundary>)}, and since the
-#' sequentially-adjusted efficacy boundary at \code{t = 1} is virtually
-#' always at or above the conventional critical value, this normally
-#' resolves to the conventional value itself. A \code{TRUE} value for
-#' \code{entered_futility_region} at that look therefore means the
-#' definitive analysis did not reach the conventional two-sided
-#' significance threshold, not that a formal interim futility stop was
-#' triggered, and not that the analysis fell short of the (higher)
-#' efficacy boundary specifically.
+#' DARIS.
+#'
+#' Formal crossing/futility decisions are evaluated only through the
+#' first observed look reaching the route endpoint (DARIS for
+#' \code{boundary_route = "design"}; \code{design_R * DARIS} for
+#' \code{"analysis"}), using the definitive boundary at that endpoint.
+#'
+#' \strong{Decision fields: "at any formal look" versus "at the definitive
+#' look" (0.2.7.14).} \code{results} reports two families of fields that
+#' answer different questions:
+#' \describe{
+#'   \item{At ANY formal look}{\code{crossed_tsa} and
+#'     \code{entered_futility_region} are \code{TRUE} if the cumulative
+#'     Z-curve crossed the efficacy boundary (respectively lay inside the
+#'     futility region) at any look up to and including the definitive one.
+#'     A trial that crossed efficacy at an interim look keeps
+#'     \code{crossed_tsa = TRUE} even if the definitive look then fell back
+#'     below the boundary.}
+#'   \item{At the DEFINITIVE look}{\code{final_crossed_efficacy},
+#'     \code{final_non_efficacy} (= \code{!final_crossed_efficacy}) and
+#'     \code{final_entered_futility_region} refer ONLY to the first look
+#'     reaching the route endpoint (\code{results$final_tsa_look}) and are
+#'     \code{NA} when that endpoint has not been reached. Version 0.2.7.13
+#'     defined \code{final_non_efficacy} as \code{!crossed_tsa}, which means
+#'     "never crossed at any look" rather than "the definitive look did not
+#'     cross"; this was corrected in 0.2.7.14.}
+#' }
+#' At the definitive look the futility boundary equals the final efficacy
+#' boundary (as in RTSA's design pass, where the two are calibrated to meet
+#' there; e.g. about 2.1-2.2 rather than 1.959964 for a two-sided alpha of
+#' 0.05 with many looks), so \code{final_entered_futility_region} is the
+#' complement of \code{final_crossed_efficacy} (both are \code{TRUE} only at
+#' |Z| exactly equal to the boundary). It merely says that the Z-curve did
+#' not reach the final efficacy boundary; it is not a formal interim
+#' futility stop, and neither family of fields is a recommendation to stop a
+#' trial. (Versions 0.2.6.x-0.2.7.11 used \code{min(qnorm(1 - alpha/2),
+#' <final efficacy boundary>)} as the final futility boundary.)
+#'
+#' \strong{Route endpoint versus DARIS (0.2.7.13/0.2.7.14).}
+#' \code{boundary_route} picks between direct ports of RTSA's two
+#' retrospective boundary computations:
+#' \describe{
+#'   \item{\code{"design"} (default)}{\code{RTSA::boundaries(type =
+#'     "design")}: alpha and beta boundaries are computed directly on the
+#'     observed information-fraction timeline (looks below \code{t = 1} plus
+#'     one synthetic \code{t = 1} point), with NO further inflation. The
+#'     formal endpoint is DARIS itself (\code{info_fraction = 1}), matching
+#'     this package's stated RIS/DARIS definition and the values validated
+#'     against RTSA's design pass.}
+#'   \item{\code{"analysis"}}{\code{RTSA::RTSA(type = "analysis", design =
+#'     NULL)}: a design pass first solves an inflation factor
+#'     (\code{design_R}) so that the design's own futility and efficacy
+#'     boundaries meet at its final look; the boundaries returned are then
+#'     recomputed on the timeline scaled by \code{design_R}, and the efficacy
+#'     boundaries change as well as the futility ones (alpha is respent on
+#'     \code{t / design_R}). The formal endpoint becomes \code{design_R *
+#'     DARIS}, not DARIS. This is RTSA's own inflated-sequential-design
+#'     convention, not the no-inflation convention of the Copenhagen Trial
+#'     Unit's TSA software.}
+#' }
+#' DARIS and the route endpoint are reported separately and never conflated:
+#' \code{results$daris_reached} and
+#' \code{information_size$DARIS_info_threshold_events} always refer to DARIS
+#' itself, whereas \code{results$final_reached},
+#' \code{information_size$route_endpoint_info} and
+#' \code{information_size$route_endpoint_events} refer to the route endpoint
+#' (identical to DARIS for \code{"design"}). For \code{"analysis"} the
+#' printed output, summary table and plot call the endpoint "analysis-route
+#' endpoint (x.xxx x DARIS)" and never "DARIS". Both routes share the same
+#' compiled recursion (\code{src/rtsa_core.h}); only the orchestration
+#' differs.
+#'
+#' \strong{Fallbacks (0.2.7.14).} \code{settings$route_used}
+#' (\code{"design"}, \code{"analysis"} or \code{"legacy"}),
+#' \code{settings$fallback_used}, \code{settings$fallback_route}
+#' (\code{"none"}, \code{"design"} or \code{"legacy"}) and
+#' \code{settings$fallback_reason} record programmatically what actually
+#' produced the boundaries. \code{"design"}: \code{boundary_route =
+#' "analysis"} failed and the RTSA-derived design-route result is returned;
+#' \code{"legacy"}: the RTSA-derived engine failed and the legacy,
+#' approximate R-only engine was used. Both are announced by warnings and,
+#' for \code{"legacy"}, a banner in \code{print()}/\code{summary()}. For
+#' confirmatory or RTSA-parity work use \code{legacy_fallback = FALSE}, which
+#' makes either failure an error.
+#'
+#' \strong{Numerical diagnostics.} The compiled engine warns when a boundary
+#' search converged only within a loose tolerance, when an integration grid
+#' collapsed to a degenerate interval, and -- with a separate, more alarming
+#' warning -- when an integration interval was REVERSED (lower wall above the
+#' upper wall), a state RTSA's own code would have stopped on and which
+#' invalidates the boundaries from that look onward. Diagnostics are
+#' reported for the converged passes, not for the transient candidate
+#' information scales tried inside the root searches.
 #'
 #' @return An object of class \code{"tsa_hr"}: a list containing the fitted
 #'   random-effects and fixed-effect \code{metafor::rma} model objects,
@@ -196,7 +293,16 @@
 #'   "Retrospective boundary timeline" above; a \code{TRUE} value at the
 #'   DARIS-reaching look reflects a comparison against the definitive
 #'   \code{t=1} futility boundary, not an interim one, and is not itself a
-#'   formal stopping recommendation), and a summary data frame. Use
+#'   formal stopping recommendation; the definitive-look fields
+#'   \code{final_crossed_efficacy}, \code{final_non_efficacy} and
+#'   \code{final_entered_futility_region}, plus \code{daris_reached} and
+#'   \code{final_reached} -- see \dQuote{Decision fields} under Details), a
+#'   \code{settings} list recording \code{boundary_route},
+#'   \code{route_used}, \code{legacy_fallback}, \code{fallback_used},
+#'   \code{fallback_route}, \code{fallback_reason}, the resolved
+#'   \code{route_endpoint} (\code{1} for \code{"design"}, \code{design_R}
+#'   for \code{"analysis"}), \code{route_endpoint_info} and
+#'   \code{used_legacy_engine}, and a summary data frame. Use
 #'   \code{plot()}, \code{summary()}, or \code{print()} on the result.
 #'
 #' @references
@@ -227,9 +333,15 @@ tsa_hr <- function(data,
                     target_HR = NA_real_,
                     method = "DL",
                     order_by = NULL,
-                    verbose = TRUE) {
+                    verbose = TRUE,
+                    boundary_route = c("design", "analysis"),
+                    legacy_fallback = TRUE) {
 
   allocation_source <- match.arg(allocation_source)
+  boundary_route <- match.arg(boundary_route)
+  if (!is.logical(legacy_fallback) || length(legacy_fallback) != 1L ||
+      is.na(legacy_fallback))
+    stop("legacy_fallback must be a single TRUE or FALSE")
   vcat <- function(...) if (verbose) cat(...)
 
   ## --- Random-effects (tau^2) estimator method --------------------------
@@ -733,10 +845,192 @@ tsa_hr <- function(data,
   ## 7. Trial sequential monitoring boundaries (alpha- and beta-spending)
   ##    Computed via this package's own O'Brien-Fleming-type recursive
   ##    integration engine (see R/obf_boundaries.R) -- no external
-  ##    dependency, and no artificial limit on the number of looks.
+  ##    dependency, and no fixed software limit on the number of looks.
   ## -----------------------------------------------------------------
-  info_fracs    <- cumul_df$info_fraction
-  final_reached <- max(info_fracs) >= 1
+  info_fracs <- cumul_df$info_fraction
+
+  ## design-pass boundary timeline on the observed information fractions:
+  ##   * retain observed interim looks strictly before DARIS (t < 1);
+  ##   * append one definitive final-analysis point at t = 1 (HARIS/DARIS);
+  ##   * do not continue the alpha or beta boundary through studies that
+  ##     occur after the required information size has been reached.
+  ##
+  ## This is deliberately separate from `cumul_df`, which continues to
+  ## contain every observed study and its cumulative Z-score.  Thus the
+  ## evidence curve can extend beyond DARIS while the formal monitoring
+  ## boundaries terminate at the RTSA-style final information point.
+  ##
+  ## ** 0.2.7.11: RTSA-derived compiled engine. **
+  ## Alpha (efficacy) and beta (non-binding futility) boundaries are now
+  ## computed by src/rtsa_core.h -- a C++ port of RTSA's own
+  ## alpha_boundary()/beta_boundary() recursion -- driven through RTSA's
+  ## boundaries(side = 2, futility = "non-binding", type = "design")
+  ## orchestration (.rtsa_design_bounds() in R/rtsa_engine.R): alpha bounds
+  ## on the (t < 1, 1) timeline, then the two-pass information-scale root
+  ## search for the futility bounds against THAT timeline's own final
+  ## efficacy wall (the alpha recursion's value at t = 1, e.g. 2.13 -- NOT
+  ## qnorm(1 - alpha/2) = 1.96, which is what 0.2.6.x-0.2.7.10 substituted
+  ## and which shifted design_R and with it every futility bound).
+  ## See NEWS.md (0.2.7.11) and inst/REVERSE_ENGINEERING_RTSA.md for the
+  ## numerical evidence.
+  ##
+  ## ** 0.2.7.13: ** this design pass is now ALWAYS run first, regardless of
+  ## `boundary_route`, because its root (design_R) is what the "analysis"
+  ## route is calibrated against. `legacy_fallback` (default TRUE) controls
+  ## what happens if the compiled engine cannot produce a result (e.g. no
+  ## root bracket exists for an unusual schedule): TRUE falls back to the
+  ## pre-0.2.7.11 R-only approximate engine, with an impossible-to-miss
+  ## warning and console banner, and marks the result
+  ## (beta_engine$engine == "legacy_r_fallback"); FALSE fails closed --
+  ## tsa_hr() stops with an error instead of silently substituting a
+  ## non-RTSA-comparable engine. See ?tsa_hr, "legacy_fallback".
+  boundary_timing_design <- sort(unique(c(info_fracs[info_fracs < 1], 1)))
+
+  ## ** 0.2.7.14: ** explicit, programmatic record of any fallback, returned in
+  ## `settings` (fallback_used / fallback_route / fallback_reason / route_used)
+  ## so calling code never has to parse warning text to tell the cases apart:
+  ##   fallback_route "none"   -- the requested route ran as requested;
+  ##   fallback_route "design" -- boundary_route = "analysis" failed and the
+  ##                              RTSA-derived DESIGN-route result is returned;
+  ##   fallback_route "legacy" -- the RTSA-derived engine failed and the
+  ##                              legacy, approximate R-only engine is used.
+  fallback_used   <- FALSE
+  fallback_route  <- "none"
+  fallback_reason <- NA_character_
+  route_used      <- boundary_route
+
+  rtsa_fit <- tryCatch(
+    .rtsa_design_bounds(boundary_timing_design, alpha = alpha_two_sided,
+                        beta = 1 - power),
+    error = function(e) e
+  )
+  used_legacy <- inherits(rtsa_fit, "error")
+  if (used_legacy) {
+    fb_msg <- paste0(
+      "*** WARNING: THE RTSA-DERIVED BOUNDARY ENGINE FAILED (",
+      conditionMessage(rtsa_fit), "). The alpha and futility boundaries in ",
+      "this result were computed with the LEGACY, APPROXIMATE R-only engine ",
+      "(pre-0.2.7.11) and are NOT comparable with RTSA. Do not report them ",
+      "as RTSA-equivalent; check the design (information fractions, alpha, ",
+      "power) or report the problem. ***"
+    )
+    if (!isTRUE(legacy_fallback)) {
+      stop(paste0(
+        "The RTSA-derived boundary engine failed (",
+        conditionMessage(rtsa_fit), "), and legacy_fallback = FALSE means ",
+        "tsa_hr() will not silently substitute the legacy, approximate ",
+        "R-only engine. Set legacy_fallback = TRUE to allow that fallback ",
+        "(with a warning), or address the underlying issue (check the ",
+        "design: information fractions, alpha, power)."
+      ), call. = FALSE)
+    }
+    warning(fb_msg, call. = FALSE, immediate. = TRUE)
+    if (verbose) cat("\n", fb_msg, "\n\n", sep = "")
+    legacy <- .tsahr_legacy_boundaries(info_fracs, boundary_timing_design,
+                                       alpha_two_sided, 1 - power)
+    alpha_bounds_design <- legacy$alpha_bounds_design
+    beta_pre_daris      <- legacy$beta_pre_daris
+    beta_engine <- c(legacy$beta_engine,
+                     list(engine = "legacy_r_fallback",
+                          engine_error = conditionMessage(rtsa_fit)))
+    ## The legacy engine has no analysis-route counterpart; a request for
+    ## boundary_route = "analysis" is honoured as closely as possible by
+    ## falling back to the (also legacy) design-route result, noted below.
+    if (boundary_route == "analysis" && verbose) {
+      cat("Note: boundary_route = \"analysis\" was requested, but the legacy\n",
+          "  fallback engine has no analysis-route equivalent; using its\n",
+          "  design-route result instead.\n", sep = "")
+    }
+    route_endpoint      <- 1
+    beta_final          <- utils::tail(alpha_bounds_design, 1)
+    beta_bounds_design  <- c(beta_pre_daris, beta_final)
+    boundary_timing     <- boundary_timing_design
+    fallback_used       <- TRUE
+    fallback_route      <- "legacy"
+    fallback_reason     <- conditionMessage(rtsa_fit)
+    route_used          <- "legacy"
+  } else if (boundary_route == "design") {
+    alpha_bounds_design <- rtsa_fit$alpha_ubound
+    beta_pre_daris      <- rtsa_fit$beta_ubound[boundary_timing_design < 1]
+    beta_engine <- c(rtsa_fit, list(engine = "rtsa_design_cpp",
+                                    boundary = rtsa_fit$beta_ubound,
+                                    warp_root = rtsa_fit$root))
+    route_endpoint <- 1
+    ## Final-look futility value (changed in 0.2.7.12): equal to the final
+    ## efficacy bound, exactly as in RTSA's design pass, where the root
+    ## search makes the futility bound meet the efficacy bound at t = 1.
+    beta_final          <- utils::tail(alpha_bounds_design, 1)
+    beta_bounds_design  <- c(beta_pre_daris, beta_final)
+    boundary_timing     <- boundary_timing_design
+  } else {
+    ## boundary_route == "analysis": RTSA::RTSA(type = "analysis",
+    ## design = NULL). The design pass above already gives design_R
+    ## (rtsa_fit$root); build the analysis-pass timeline (observed looks
+    ## capped/extended to design_R) exactly as RTSA's own RTSA() does, and
+    ## run the analysis-route recursion (.rtsa_analysis_bounds()) against
+    ## it. If THIS pass fails, the same legacy_fallback contract applies,
+    ## but there is no legacy analysis-route engine to fall back to, so
+    ## the fallback is the already-computed design-route result (with a
+    ## warning explaining the substitution) rather than the pre-0.2.7.11
+    ## approximate engine.
+    design_R <- rtsa_fit$root
+    t_ext <- if (max(info_fracs) < design_R) {
+      c(info_fracs, design_R)
+    } else if (max(info_fracs) > design_R) {
+      c(info_fracs[info_fracs < design_R], design_R)
+    } else {
+      info_fracs
+    }
+    ana_fit <- tryCatch(
+      .rtsa_analysis_bounds(t_ext, design_R, alpha = alpha_two_sided,
+                            beta = 1 - power),
+      error = function(e) e
+    )
+    if (inherits(ana_fit, "error")) {
+      fb_msg2 <- paste0(
+        "*** WARNING: THE RTSA ANALYSIS-ROUTE ENGINE FAILED (",
+        conditionMessage(ana_fit), "). boundary_route = \"analysis\" was ",
+        "requested, but tsa_hr() is falling back to its \"design\"-route ",
+        "result instead (still the RTSA-derived compiled engine, just the ",
+        "other route -- NOT the legacy R-only engine). ***"
+      )
+      if (!isTRUE(legacy_fallback)) {
+        stop(paste0(
+          "The RTSA analysis-route boundary engine failed (",
+          conditionMessage(ana_fit), "), and legacy_fallback = FALSE means ",
+          "tsa_hr() will not silently fall back to the design-route result. ",
+          "Set legacy_fallback = TRUE to allow that fallback (with a ",
+          "warning), pass boundary_route = \"design\" directly, or address ",
+          "the underlying issue."
+        ), call. = FALSE)
+      }
+      warning(fb_msg2, call. = FALSE, immediate. = TRUE)
+      if (verbose) cat("\n", fb_msg2, "\n\n", sep = "")
+      alpha_bounds_design <- rtsa_fit$alpha_ubound
+      beta_pre_daris      <- rtsa_fit$beta_ubound[boundary_timing_design < 1]
+      beta_engine <- c(rtsa_fit, list(engine = "rtsa_design_cpp",
+                                      boundary = rtsa_fit$beta_ubound,
+                                      warp_root = rtsa_fit$root,
+                                      analysis_route_error = conditionMessage(ana_fit)))
+      route_endpoint      <- 1
+      beta_final          <- utils::tail(alpha_bounds_design, 1)
+      beta_bounds_design  <- c(beta_pre_daris, beta_final)
+      boundary_timing     <- boundary_timing_design
+      fallback_used       <- TRUE
+      fallback_route      <- "design"
+      fallback_reason     <- conditionMessage(ana_fit)
+      route_used          <- "design"
+    } else {
+      route_endpoint      <- design_R
+      boundary_timing     <- ana_fit$timing
+      alpha_bounds_design <- ana_fit$alpha_ubound
+      beta_bounds_design  <- ana_fit$beta_ubound
+      beta_pre_daris      <- beta_bounds_design[boundary_timing < route_endpoint]
+      beta_engine <- c(ana_fit, list(engine = "rtsa_analysis_cpp",
+                                     boundary = beta_bounds_design,
+                                     design_R = design_R))
+    }
+  }
 
   ## -----------------------------------------------------------------
   ## 7b. Reconcile the events-scale DARIS reference with the
@@ -763,78 +1057,46 @@ tsa_hr <- function(data,
   ##     DARIS criterion (see DESCRIPTION), and is treated as such here.
   ##
   ##     Fix: locate the cumulative-events point at which the observed
-  ##     information first reaches DARIS_info, by linear interpolation
-  ##     between the two bracketing looks. Because no study actually
-  ##     occurred exactly at that interpolated event count, this is an
-  ##     ESTIMATE of where the threshold was crossed, not an event count
-  ##     that was itself observed -- it is deliberately NOT called
-  ##     "DARIS events": that label is reserved for the theoretical
+  ##     information first reaches route_endpoint (1 for the design route;
+  ##     design_R for the analysis route -- see 0.2.7.13, boundary_route),
+  ##     by linear interpolation between the two bracketing looks. Because
+  ##     no study actually occurred exactly at that interpolated event
+  ##     count, this is an ESTIMATE of where the threshold was crossed, not
+  ##     an event count that was itself observed -- it is deliberately NOT
+  ##     called "DARIS events": that label is reserved for the theoretical
   ##     Schoenfeld-based event-equivalent (DARIS_events) computed in
   ##     Section 5. plot.tsa_hr() shows BOTH quantities, separately
-  ##     labelled, rather than substituting one for the other. If DARIS
-  ##     has NOT been reached within the observed data, there is nothing
-  ##     to interpolate.
+  ##     labelled, rather than substituting one for the other. If the
+  ##     endpoint has NOT been reached within the observed data, there is
+  ##     nothing to interpolate.
   ## -----------------------------------------------------------------
-  if (final_reached) {
-    reach_idx <- which(cumul_df$info_fraction >= 1)[1]
-    if (reach_idx == 1) {
-      DARIS_info_threshold_events <- cumul_df$cum_events[1]
-    } else {
-      f0 <- cumul_df$info_fraction[reach_idx - 1]
-      f1 <- cumul_df$info_fraction[reach_idx]
-      e0 <- cumul_df$cum_events[reach_idx - 1]
-      e1 <- cumul_df$cum_events[reach_idx]
-      w  <- if (f1 > f0) (1 - f0) / (f1 - f0) else 0
-      DARIS_info_threshold_events <- e0 + w * (e1 - e0)
-    }
+  ## ** 0.2.7.14: ** two DISTINCT thresholds are now kept apart instead of
+  ## one being called "DARIS" in both routes:
+  ##   * DARIS itself (info_fraction = 1, i.e. DARIS_info) --
+  ##     `daris_reached` / `DARIS_info_threshold_events`, identical in both
+  ##     routes;
+  ##   * the ROUTE ENDPOINT (route_endpoint * DARIS_info; = DARIS for the
+  ##     design route, design_R * DARIS for the analysis route) --
+  ##     `final_reached` / `route_endpoint_events_est`. THIS is the formal
+  ##     analysis endpoint the decision layer is evaluated at.
+  ## For the design route route_endpoint == 1, so both coincide exactly and
+  ## every value below is unchanged from 0.2.7.13.
+  final_reached <- max(info_fracs) >= route_endpoint
+  daris_reached <- max(info_fracs) >= 1
+  analysis_endpoint <- identical(route_used, "analysis")
+  route_endpoint_info <- route_endpoint * DARIS_info
+
+  DARIS_info_threshold_events <- .tsahr_events_at_fraction(cumul_df, 1)
+  route_endpoint_events_est <- if (route_endpoint == 1) {
+    DARIS_info_threshold_events
   } else {
-    DARIS_info_threshold_events <- NA_real_
+    .tsahr_events_at_fraction(cumul_df, route_endpoint)
   }
-
-  ## RTSA retrospective boundary timeline:
-  ##   * retain observed interim looks strictly before DARIS (t < 1);
-  ##   * append one definitive final-analysis point at t = 1 (HARIS/DARIS);
-  ##   * do not continue the alpha or beta boundary through studies that
-  ##     occur after the required information size has been reached.
-  ##
-  ## This is deliberately separate from `cumul_df`, which continues to
-  ## contain every observed study and its cumulative Z-score.  Thus the
-  ## evidence curve can extend beyond DARIS while the formal monitoring
-  ## boundaries terminate at the RTSA-style final information point.
-  boundary_timing <- sort(unique(c(info_fracs[info_fracs < 1], 1)))
-  alpha_bounds_design <- .obf_alpha_boundary(boundary_timing, alpha = alpha_two_sided)
-
-  ## Keep the beta engine on the original observed timeline as well, so
-  ## `beta_engine` continues to expose the RTSA retrospective calculation
-  ## including its over-powered (>1) branch.  For the plotted/design
-  ## boundary timeline, use a second calculation on the RTSA-style
-  ## t < 1 + final t = 1 timeline.
-  beta_unique_fracs <- sort(unique(info_fracs))
-  beta_alpha_ref_observed <- alpha_bounds_design[
-    match(pmin(beta_unique_fracs, 1), boundary_timing)
-  ]
-  beta_engine <- .rtsa_beta_boundary(beta_unique_fracs,
-                                      alpha = alpha_two_sided,
-                                      beta = 1 - power,
-                                      c_vec_alpha = beta_alpha_ref_observed)
-
-  ## IMPORTANT: do not recompute the RTSA beta engine on `boundary_timing`.
-  ## The retrospective inner-wedge recursion is sequential: adding the
-  ## synthetic t = 1 endpoint changes the earlier wedge recursion and hence
-  ## changes the early futility boundaries.  Version 0.2.4.3 computed the
-  ## early beta boundaries from the observed information fractions (with
-  ## post-DARIS observations handled by RTSA's over-powered branch).  The
-  ## requested correction is ONLY to relocate/add the final formal endpoint;
-  ## therefore preserve those 0.2.4.3 beta values exactly and append the
-  ## definitive final boundary separately.
-  beta_pre_daris <- beta_engine$boundary[
-    match(boundary_timing[boundary_timing < 1], beta_unique_fracs)
-  ]
-  beta_final <- min(
-    stats::qnorm(1 - alpha_two_sided / 2),
-    utils::tail(alpha_bounds_design, 1)
-  )
-  beta_bounds_design <- c(beta_pre_daris, beta_final)
+  endpoint_name <- if (analysis_endpoint) {
+    sprintf("analysis-route endpoint (%.3f x DARIS)", route_endpoint)
+  } else {
+    "DARIS"
+  }
 
   ## Map only genuine pre-DARIS observed looks back to the cumulative
   ## study table.  The synthetic t = 1 HARIS point is stored separately in
@@ -842,7 +1104,7 @@ tsa_hr <- function(data,
   ## not be inserted into `cumul_df`.
   boundary_z <- rep(NA_real_, length(info_fracs))
   futility_z <- rep(NA_real_, length(info_fracs))
-  pre_daris <- info_fracs < 1
+  pre_daris <- info_fracs < route_endpoint
   if (any(pre_daris)) {
     boundary_z[pre_daris] <- alpha_bounds_design[match(info_fracs[pre_daris],
                                                        boundary_timing)]
@@ -866,17 +1128,20 @@ tsa_hr <- function(data,
   ## the estimated event-coordinate at which the decision information target
   ## was reached.  If DARIS has not yet been reached, RTSA's retrospective
   ## design endpoint remains the theoretical t = 1 event-equivalent.
+  ## ** 0.2.7.14: ** the endpoint is the ROUTE endpoint: for the analysis
+  ## route the not-yet-reached fallback is the theoretical event-equivalent
+  ## of design_R * DARIS (DARIS_events * route_endpoint), not of DARIS.
   boundary_endpoint_events <- if (final_reached &&
-                                   is.finite(DARIS_info_threshold_events)) {
-    DARIS_info_threshold_events
+                                   is.finite(route_endpoint_events_est)) {
+    route_endpoint_events_est
   } else {
-    DARIS_events
+    DARIS_events * route_endpoint
   }
 
   boundary_timeline <- data.frame(
     info_fraction = boundary_timing,
     cum_events = c(
-      vapply(boundary_timing[boundary_timing < 1], function(tt) {
+      vapply(boundary_timing[boundary_timing < route_endpoint], function(tt) {
         idx <- which(info_fracs == tt)[1]
         cumul_df$cum_events[idx]
       }, numeric(1)),
@@ -886,14 +1151,20 @@ tsa_hr <- function(data,
     TSA_boundary_lower = -alpha_bounds_design,
     TSA_futility_upper = beta_bounds_design,
     TSA_futility_lower = -beta_bounds_design,
-    synthetic = boundary_timing == 1,
+    synthetic = boundary_timing == route_endpoint,
     stringsAsFactors = FALSE
   )
 
   if (verbose) {
     cat("=== Trial sequential monitoring boundaries (alpha/beta spending) ===\n")
-    cat(sprintf("Formal final boundary endpoint (DARIS information reached): %.1f cumulative events\n",
-                boundary_endpoint_events))
+    if (analysis_endpoint) {
+      cat(sprintf(paste0("Formal final boundary endpoint (%s = %.4f information ",
+                         "units): %.1f cumulative events\n"),
+                  endpoint_name, route_endpoint_info, boundary_endpoint_events))
+    } else {
+      cat(sprintf("Formal final boundary endpoint (DARIS information reached): %.1f cumulative events\n",
+                  boundary_endpoint_events))
+    }
     print(cumul_df[, c("Study", "info_fraction", "Z", "TSA_boundary_upper", "TSA_futility_upper")])
     cat("\n")
   }
@@ -913,18 +1184,19 @@ tsa_hr <- function(data,
   ##     The full cumulative Z-curve, including any studies added after
   ##     DARIS, is still returned/plotted in full -- only the formal
   ##     sequential decision is restricted, not what is shown.
-  final_tsa_look <- if (final_reached) which(info_fracs >= 1)[1] else length(info_fracs)
+  final_tsa_look <- if (final_reached) which(info_fracs >= route_endpoint)[1] else length(info_fracs)
   decision_idx <- seq_len(final_tsa_look)
 
-  ## For the formal decision, the first look reaching DARIS is compared
-  ## with the definitive t = 1 boundary, even though that boundary is
-  ## displayed at the synthetic HARIS endpoint rather than on the observed
-  ## post-DARIS study rows.
+  ## For the formal decision, the first look reaching the route endpoint
+  ## (1 for the design route; design_R for the analysis route) is compared
+  ## with the definitive boundary at that endpoint, even though that
+  ## boundary is displayed at the synthetic HARIS endpoint rather than on
+  ## the observed post-endpoint study rows.
   decision_boundary_upper <- boundary_timeline$TSA_boundary_upper[
-    match(pmin(info_fracs[decision_idx], 1), boundary_timeline$info_fraction)
+    match(pmin(info_fracs[decision_idx], route_endpoint), boundary_timeline$info_fraction)
   ]
   decision_futility_upper <- boundary_timeline$TSA_futility_upper[
-    match(pmin(info_fracs[decision_idx], 1), boundary_timeline$info_fraction)
+    match(pmin(info_fracs[decision_idx], route_endpoint), boundary_timeline$info_fraction)
   ]
 
   crossed_tsa <- any(abs(cumul_df$Z[decision_idx]) >= decision_boundary_upper,
@@ -946,8 +1218,8 @@ tsa_hr <- function(data,
   ## `entered_futility_region` uses the same decision_idx / definitive
   ## t=1-boundary comparison as crossed_tsa (see comment above
   ## decision_idx). At the first DARIS-reaching look specifically, this
-  ## means comparing against the FINAL futility boundary (which by the
-  ## RTSA convention equals qnorm(1-alpha/2)), not an interim futility
+  ## means comparing against the FINAL futility boundary (which, as in
+  ## RTSA's design pass, equals the final efficacy boundary), not an interim futility
   ## boundary -- so entered_futility_region == TRUE at that look does
   ## NOT mean "TSA recommends stopping for futility now"; the printed
   ## summary label says "(not a formal stopping decision)" for exactly
@@ -959,14 +1231,39 @@ tsa_hr <- function(data,
   entered_futility_region <- any(abs(cumul_df$Z[decision_idx]) <= decision_futility_upper,
                                   na.rm = TRUE)
 
+  ## ** 0.2.7.14: DEFINITIVE-LOOK fields (fix of the 0.2.7.13 semantics). **
+  ##
+  ## `crossed_tsa` and `entered_futility_region` above are "at ANY formal
+  ## look up to the route endpoint" quantities. 0.2.7.13 defined
+  ## `final_non_efficacy <- !crossed_tsa`, which is NOT "the definitive look
+  ## did not cross efficacy": a trial that crossed at an interim look and
+  ## then fell back below the boundary at the definitive look would report
+  ## FALSE. The fields below refer to the definitive look ONLY --
+  ## `final_tsa_look`, the first look reaching the route endpoint -- and are
+  ## NA when that endpoint has not been reached (there is then no
+  ## definitive look to report on).
+  ##
+  ## Because the futility and efficacy boundaries meet at the definitive
+  ## look, `final_entered_futility_region` there is the complement of
+  ## `final_crossed_efficacy` (both would be TRUE only at |Z| exactly equal
+  ## to the boundary). Neither is a recommendation to stop early.
+  definitive <- .tsahr_definitive_look(cumul_df$Z, final_reached, final_tsa_look,
+                                       decision_boundary_upper,
+                                       decision_futility_upper)
+  final_crossed_efficacy        <- definitive$final_crossed_efficacy
+  final_entered_futility_region <- definitive$final_entered_futility_region
+  final_non_efficacy            <- definitive$final_non_efficacy
+
   if (verbose) {
     if (final_reached && final_tsa_look < nrow(cumul_df)) {
-      cat(sprintf(paste0("Note: DARIS was reached at study #%d of %d ('%s'). Formal TSA\n",
+      cat(sprintf(paste0("Note: %s was reached at study #%d of %d ('%s'). Formal TSA\n",
                           "  boundary-crossing/futility decisions below are evaluated only\n",
                           "  through that look (studies added afterward are still shown in\n",
                           "  the returned data and plot, but are not treated as additional\n",
-                          "  formal 't=1' analyses -- see ?tsa_hr).\n"),
-                  final_tsa_look, nrow(cumul_df), cumul_df$Study[final_tsa_look]))
+                          "  formal '%s' analyses -- see ?tsa_hr).\n"),
+                  endpoint_name, final_tsa_look, nrow(cumul_df),
+                  cumul_df$Study[final_tsa_look],
+                  if (analysis_endpoint) sprintf("t=%.3f", route_endpoint) else "t=1"))
     }
     cat(sprintf("Cumulative Z-curve crossed the conventional (P<0.05) boundary: %s\n",
                 ifelse(crossed_conventional, "YES", "NO")))
@@ -974,11 +1271,26 @@ tsa_hr <- function(data,
                 ifelse(crossed_tsa, "YES", "NO")))
     cat(sprintf("Cumulative Z-curve entered the non-binding futility region  : %s\n",
                 ifelse(entered_futility_region, "YES", "NO")))
+    if (final_reached) {
+      cat(sprintf("Definitive look (%s) crossed the efficacy boundary%s: %s\n",
+                  if (analysis_endpoint) "route endpoint" else "DARIS",
+                  if (analysis_endpoint) "" else "         ",
+                  ifelse(final_crossed_efficacy, "YES", "NO")))
+    }
     cat(sprintf("Required information size (DARIS) reached                    : %s\n",
-                ifelse(final_reached, "YES", "NO")))
+                ifelse(daris_reached, "YES", "NO")))
+    if (analysis_endpoint) {
+      cat(sprintf("Analysis-route endpoint (%.3f x DARIS) reached               : %s\n",
+                  route_endpoint, ifelse(final_reached, "YES", "NO")))
+    }
     cat(sprintf("  Theoretical DARIS event-equivalent (Schoenfeld-based)        : %d\n",
                 ceiling(DARIS_events)))
-    if (final_reached) {
+    if (analysis_endpoint) {
+      cat(sprintf(paste0("  Theoretical event-equivalent of the analysis-route endpoint\n",
+                          "  (%.3f x DARIS)                                            : %d\n"),
+                  route_endpoint, ceiling(DARIS_events * route_endpoint)))
+    }
+    if (daris_reached) {
       cat(sprintf(paste0("  Estimated cumulative events at which DARIS information\n",
                           "  was reached (interpolated, not an observed look)          : %d\n"),
                   ceiling(DARIS_info_threshold_events)))
@@ -1006,37 +1318,51 @@ tsa_hr <- function(data,
   events_accrued <- sum(data$total_events)
   info_accrued_final <- cumul_df$info_accrued[nrow(cumul_df)]
 
-  summary_df <- data.frame(
-    Parameter = c("Pooled HR (random effects, observed)", "95% CI lower", "95% CI upper",
-                  "Anticipated HR (used for RIS calculation)",
-                  "I2 (%)", "tau2", "Diversity D2 (%)", "Adjustment factor",
-                  "Allocation psi (proportion in treatment arm)",
-                  "Required statistical information (allocation-free)",
-                  "Required Information Size in events (RIS, under pooled psi)",
-                  "Diversity-Adjusted Required Information (DARIS, information units)",
-                  "Theoretical DARIS event-equivalent (Schoenfeld-based, under pooled psi)",
-                  "Events accrued (reporting scale)",
-                  "Statistical information accrued (observed inverse-variance)",
-                  "% of DARIS (information) reached",
-                  "Estimated cumulative events at which DARIS information was reached",
-                  "Crossed conventional boundary", "Crossed TSA monitoring boundary",
-                  "Entered non-binding futility region (not a formal stopping decision)"),
-    Value = c(round(exp(res_re$b), 3), round(exp(res_re$ci.lb), 3), round(exp(res_re$ci.ub), 3),
-              round(HR_anticipated, 3),
-              round(I2, 1), round(tau2, 4), round(D2 * 100, 1), round(AF, 3),
-              round(allocation_p_used, 4),
-              round(info_required, 4),
-              ceiling(RIS_events),
-              round(DARIS_info, 4),
-              ceiling(DARIS_events),
-              events_accrued,
-              round(info_accrued_final, 4),
-              round(100 * info_accrued_final / DARIS_info, 1),
-              ifelse(is.na(DARIS_info_threshold_events), NA_real_,
-                     ceiling(DARIS_info_threshold_events)),
-              crossed_conventional, crossed_tsa, entered_futility_region),
-    stringsAsFactors = FALSE
-  )
+  ## ** 0.2.7.14: ** decision rows distinguish "at ANY formal look" from "at
+  ## the DEFINITIVE look" (see the decision-fields comment above); the
+  ## analysis-route endpoint row is added only when that route actually ran.
+  sum_par <- c("Pooled HR (random effects, observed)", "95% CI lower", "95% CI upper",
+               "Anticipated HR (used for RIS calculation)",
+               "I2 (%)", "tau2", "Diversity D2 (%)", "Adjustment factor",
+               "Allocation psi (proportion in treatment arm)",
+               "Required statistical information (allocation-free)",
+               "Required Information Size in events (RIS, under pooled psi)",
+               "Diversity-Adjusted Required Information (DARIS, information units)",
+               "Theoretical DARIS event-equivalent (Schoenfeld-based, under pooled psi)",
+               "Events accrued (reporting scale)",
+               "Statistical information accrued (observed inverse-variance)",
+               "% of DARIS (information) reached",
+               "Estimated cumulative events at which DARIS information was reached")
+  sum_val <- c(round(exp(res_re$b), 3), round(exp(res_re$ci.lb), 3), round(exp(res_re$ci.ub), 3),
+               round(HR_anticipated, 3),
+               round(I2, 1), round(tau2, 4), round(D2 * 100, 1), round(AF, 3),
+               round(allocation_p_used, 4),
+               round(info_required, 4),
+               ceiling(RIS_events),
+               round(DARIS_info, 4),
+               ceiling(DARIS_events),
+               events_accrued,
+               round(info_accrued_final, 4),
+               round(100 * info_accrued_final / DARIS_info, 1),
+               ifelse(is.na(DARIS_info_threshold_events), NA_real_,
+                      ceiling(DARIS_info_threshold_events)))
+  if (analysis_endpoint) {
+    sum_par <- c(sum_par, sprintf(
+      "Estimated cumulative events at which the analysis-route endpoint (%.3f x DARIS) was reached",
+      route_endpoint))
+    sum_val <- c(sum_val, ifelse(is.na(route_endpoint_events_est), NA_real_,
+                                 ceiling(route_endpoint_events_est)))
+  }
+  sum_par <- c(sum_par,
+               "Crossed conventional boundary",
+               "Crossed TSA monitoring boundary (at any formal look)",
+               "Entered non-binding futility region (at any formal look; not a formal stopping decision)",
+               "Definitive look crossed efficacy boundary (NA if the endpoint was not reached)",
+               "Definitive look did not cross efficacy (final_non_efficacy; NA if the endpoint was not reached)")
+  sum_val <- c(sum_val, crossed_conventional, crossed_tsa, entered_futility_region,
+               final_crossed_efficacy, final_non_efficacy)
+  summary_df <- data.frame(Parameter = sum_par, Value = sum_val,
+                           stringsAsFactors = FALSE)
 
   out <- list(
     data = data,
@@ -1056,6 +1382,8 @@ tsa_hr <- function(data,
                              info_required = info_required, RIS_events = RIS_events,
                              DARIS_info = DARIS_info, DARIS_events = DARIS_events,
                              DARIS_info_threshold_events = DARIS_info_threshold_events,
+                             route_endpoint_info = route_endpoint_info,
+                             route_endpoint_events = route_endpoint_events_est,
                              circularity_warning = circularity_warning,
                              circularity_severe = circularity_severe),
     cumulative = cumul_df,
@@ -1063,10 +1391,23 @@ tsa_hr <- function(data,
     results = list(crossed_conventional = crossed_conventional,
                    crossed_tsa = crossed_tsa,
                    entered_futility_region = entered_futility_region,
+                   final_crossed_efficacy = final_crossed_efficacy,
+                   final_non_efficacy = final_non_efficacy,
+                   final_entered_futility_region = final_entered_futility_region,
                    final_reached = final_reached,
+                   daris_reached = daris_reached,
                    final_tsa_look = final_tsa_look,
                    events_accrued = events_accrued,
                    info_accrued_final = info_accrued_final),
+    settings = list(boundary_route = boundary_route,
+                    legacy_fallback = legacy_fallback,
+                    route_endpoint = route_endpoint,
+                    route_endpoint_info = route_endpoint_info,
+                    route_used = route_used,
+                    fallback_used = fallback_used,
+                    fallback_route = fallback_route,
+                    fallback_reason = fallback_reason,
+                    used_legacy_engine = used_legacy),
     summary_table = summary_df
   )
   class(out) <- "tsa_hr"

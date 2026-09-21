@@ -124,6 +124,14 @@
 ##     correct nominal timing; this is expected to pass at both
 ##     n_grid=2000 and n_grid=16000 based on the Python check above, but
 ##     has not been confirmed against the actual R implementation.
+##     ** Measured in R (0.2.7.21, at the default n_grid = 16000): **
+##       tsahr:::.obf_alpha_boundary(c(0.25, 0.5, 0.75, 1), 0.05)
+##         = 4.332634 2.963388 2.358980 2.012955
+##       live RTSA 0.2.2 (inst/extdata/rtsa_0.2.2_reference.R)
+##         = 4.332634 2.963131 2.359044 2.014090
+##       error (FFT - RTSA): 4e-7, 2.6e-4, -6.4e-5, -1.14e-3 -- largest at the
+##       final look. One schedule only: not a general accuracy bound. The
+##       5-look snippet above (t = 0.2 ... 1) has still not been run.
 ##   - The recursive integration engine itself (the FFT-based recursion
 ##     below) was independently reproduced line-by-line in Python (scipy)
 ##     and checked two ways. These checks validate the recursion
@@ -281,176 +289,373 @@
 ## analysis).
 
 ## -------------------------------------------------------------------------
-## RTSA / original CTU-TSA non-binding futility engine
+## -------------------------------------------------------------------------
+## RTSA's actual non-binding beta-spending / futility-boundary engine
 ##
-## This is an R implementation ADAPTED FROM the retrospective/analysis-mode
-## "inner wedge" algorithm supplied from RTSA's old TSA functions
-## ("translated from java"). It follows RTSA's algorithmic structure
-## (steps 1-6 below are RTSA's, in RTSA's order, with the same indexing
-## conventions) but is deliberately NOT a bit-for-bit transcription:
-## tsahr adds numerical safeguards and package-specific handling that
-## RTSA has no need for, including capping the futility boundary at the
-## corresponding alpha boundary (`pmin(boundary, c_vec_alpha)`), dynamic
-## grid sizing, a convergence fallback, defensive NA handling, and the
-## mapping of post-DARIS looks onto the definitive t=1 boundary. Those
-## are sensible additions for this package's use case, but they mean the
-## engine should be described as RTSA-derived/adapted rather than as
-## reproducing RTSA's numbers exactly -- no live multi-look RTSA beta
-## reference has yet been obtained to check the latter (see VALIDATION in
-## this file and inst/REVERSE_ENGINEERING_RTSA.md). It is deliberately
-## used here instead of
-## rpact: tsahr is an observed-data / retrospective TSA application and
-## this engine is the practical reference requested for that use case.
+## ** RECONSTRUCTED in 0.2.7. ** Checked directly against the real RTSA
+## R package source (RTSA 0.2.2, https://github.com/AnneLyng/RTSA:
+## R/RTSA_helperfunctions.R, R/boundaries.R, src/first.cpp), which is NOT
+## what the previous engine (0.2.4-0.2.6.9) was built from. That engine's
+## own comments (later softened in 0.2.6.6-0.2.6.9 to "adapted from",
+## but never actually rebuilt) described it as "a literal
+## R implementation of the retrospective/analysis-mode 'inner wedge'
+## algorithm supplied from RTSA's old TSA functions ('translated from
+## java')" -- and indeed, none of the function names it cited as its
+## source (betas_Obf(), sdfunc(), trap_old(), gfunc(), fcab_old(),
+## qpos_old(), first_old(), other_old(), searchfunc_old(), getInnerWedge(),
+## fakeIFY, tsa_beta_bound) appear anywhere in the actual RTSA 0.2.2
+## source. It was a faithful implementation of a DIFFERENT, older tool,
+## not of this package's own documented reference. See
+## inst/REVERSE_ENGINEERING_RTSA.md for the full write-up of what that
+## meant in practice and what changed here.
 ##
-## The important distinction from the previous beta engine is that the
-## beta boundary is NOT obtained by independently assigning a probability
-## to each look under H1.  Instead:
-##   1. construct the O'Brien-Fleming beta-spending increments;
-##   2. construct a symmetric null-referenced inner wedge recursively;
-##   3. propagate the surviving density through the wedge;
-##   4. solve each subsequent wedge edge from the incremental beta spend;
-##   5. derive an empirical drift from the final wedge width;
-##   6. shift the null-referenced wedge into the reported futility Z
-##      boundaries.
+## This is a line-by-line port of RTSA's own beta_boundary(), z_n_w(),
+## and searchfunc() (R/RTSA_helperfunctions.R), and of init_int(),
+## recur_int(), and prob() (src/first.cpp -- ported to pure R here,
+## since tsahr has no compiled-code dependency), specialised to the one
+## configuration this package actually needs:
+##   * es_beta = "esOF" (O'Brien-Fleming-type beta spending) -- the only
+##     spending family tsahr exposes, matching .rtsa_beta_spend_OF()
+##     below (unchanged from previous versions; its formula already
+##     matched RTSA's real esOF(), just not the recursion around it);
+##   * side = 1 passed internally to RTSA's own beta_boundary(), even
+##     though the overall design is two-sided (side = 2). This is
+##     RTSA's OWN convention, not a tsahr simplification: see
+##     boundaries(), the side == 2 / futility == "non-binding" / type
+##     == "design" branch, where beta_boundary() is always called with
+##     side = 1 and an EXPLICIT delta override -- the futility "inner
+##     wedge" is a one-sided construction against a fixed drift, not a
+##     beta budget split across two sides;
+##   * delta = |qnorm(alpha/2) + qnorm(beta)|, the same fixed
+##     standardised drift RTSA computes explicitly in that branch
+##     (`delta <- abs(qnorm(alpha/side)+qnorm(beta))` with the design's
+##     actual side = 2) and passes into beta_boundary() -- a FIXED
+##     theoretical quantity, not something derived from the shape of
+##     the futility wedge itself (which is what the previous
+##     "testDrift" engine did).
 ##
-## The implementation below follows the supplied RTSA/CTU functions
-## betas_Obf(), sdfunc(), trap_old(), gfunc(), fcab_old(), qpos_old(),
-## first_old(), other_old(), searchfunc_old(), and getInnerWedge().
+## The single most consequential difference from the previous engine:
+## RTSA solves for each futility boundary DIRECTLY under this fixed
+## alternative-hypothesis drift, using the ACTUAL alpha efficacy
+## boundary (c_vec_alpha -- generally a decreasing-then-flattening
+## sequence, not a constant) as the upper wall of the recursive
+## integration at EVERY step, not a symmetric null-referenced
+## construction that only gets reconciled with the alpha boundary,
+## approximately, after the fact.
+##
+## RTSA's real algorithm also does NOT hide every non-positive futility
+## value: it returns NA only where the pinned "zninf" sentinel (-20) was
+## used because the incremental beta spend at that look was negligible
+## (see boundaries.R's `abs(lb$za) == 20` checks). A negative non-binding
+## futility boundary is a legitimate result -- it says the trial would
+## only be flagged for advisory futility if the cumulative Z-statistic
+## had already crossed to the "wrong" side of the null by that point --
+## and previous versions of this package incorrectly suppressed it
+## (`b[b <= 0] <- NA_real_`).
+##
+## One deliberate departure from a literal port: RTSA's own `boundaries()`
+## achieves an exact meeting of the alpha and beta boundaries at the
+## final, definitive look by root-finding (`uniroot(inf_warp, ...)`,
+## rescaling its own "design" timing via `warp_root` until the two meet
+## exactly) -- machinery that exists to solve a DESIGN problem (find the
+## sample-size inflation that hits a target power for a not-yet-observed
+## trial). tsahr has no such design phase: it operates directly on
+## observed information fractions, with t = 1 defined as the DARIS/HARIS
+## point itself. Rather than port RTSA's root-finding wholesale (a
+## substantially different, prospective-design undertaking, not part of
+## reconstructing the beta-spending recursion itself), this package
+## keeps its previous, explicit convention: at the single definitive
+## final look, there is no distinct "non-binding early stop for
+## futility" apart from the main efficacy decision, so that look's
+## futility boundary is set to equal the (exact, closed-form) final
+## efficacy boundary qnorm(1-alpha/2) directly, exactly as previous
+## versions of this package already did.
+##
+## VALIDATION STATUS (honest -- please read before trusting this for a
+## real analysis): the alpha engine above was checked against a LIVE
+## RTSA::boundaries() call (see VALIDATION notes higher in this file).
+## This beta/futility reconstruction has NOT been -- no R interpreter is
+## available in the environment that wrote this port, so none of the
+## R code below has actually been executed, let alone compared against
+## RTSA's real output. It is a careful, line-by-line reading of RTSA's
+## published source, not a numerically confirmed match. Before relying
+## on this for anything but an approximate, illustrative futility band
+## (which is how this package has always described its futility output
+## -- see the "Non-binding beta/futility boundary engine" VALIDATION
+## note above), please run a direct comparison, e.g.:
+##   design <- RTSA::boundaries(timing = c(0.2,0.4,0.6,0.8,1), alpha = 0.05,
+##                               beta = 0.2, side = 2, futility = "non-binding",
+##                               es_alpha = "esOF", es_beta = "esOF")
+##   design$beta_ubound
+##   tsahr:::.rtsa_beta_boundary(c(0.2,0.4,0.6,0.8,1), alpha = 0.05, beta = 0.2,
+##                                c_vec_alpha = design$alpha_ubound)$boundary
+## and compare the first K-1 entries directly (the final entry is
+## tsahr's own definitive-look convention described above, not a
+## quantity RTSA's un-rooted beta_boundary() output should be expected
+## to match without its own root-finding applied).
 ## -------------------------------------------------------------------------
 
-.rtsa_gfunc <- function(x, delta) {
-  exp(-0.5 * (x - delta)^2) / sqrt(2 * pi)
+## Small defensive helper (0.2.7.2, NOT part of RTSA's own code): a
+## seq(from, to, 2) that returns an empty integer vector instead of
+## erroring when `to < from`, i.e. when the requested index range is
+## empty. Needed because R's seq() with an explicit `by` argument
+## throws "wrong sign in 'by' argument" in that case rather than
+## returning integer(0) the way e.g. seq_len(0) does -- see
+## .rtsa2_z_n_w()'s own safety-net comment for the general issue this
+## belongs to. Used inside .rtsa2_z_n_w() in place of the raw
+## seq(3, m - 2, 2) / seq(2, m - 1, 2) index-membership checks in its
+## Simpson-weight loop, which are legitimately EMPTY (not erroring)
+## ranges whenever the integration grid has few points -- m == 3 in
+## particular (i.e. exactly 2 nodes in `xi`), which both the 0.2.7.1
+## za/zb clamp and safety-net fix, and, independently, a naturally very
+## narrow [za[i], zb[i]] interval near boundary convergence, can
+## legitimately produce. Not exported.
+.rtsa2_seq_by2 <- function(from, to) {
+  if (to < from) integer(0) else seq(from, to, 2)
 }
 
-.rtsa_trap <- function(f, n, h) {
-  if (n <= 0L) return(0)
-  h * (f[1L] + f[n + 1L] + 2 * sum(f[seq_len(n - 1L) + 1L])) / 2
+## Ported from RTSA's z_n_w() (R/RTSA_helperfunctions.R): builds a
+## Simpson's-rule integration grid on [za[i], zb[i]] (Z-space at look
+## i), with a log-spaced tail extension so the grid still reaches a
+## possibly-distant boundary without wasting points on the bulk of the
+## density.
+.rtsa2_z_n_w <- function(r, info, za, zb, i, delta) {
+  j <- 1:(6 * r - 1)
+  xi <- delta * info$sd_incr[i] +
+    (j < r) * (-3 - 4 * log(r / j)) +
+    (r <= j & j <= 5 * r) * (-3 + 3 * (j - r) / (2 * r)) +
+    (5 * r < j) * (3 + 4 * log(r / (6 * r - j)))
+
+  if (sum(xi < za[i]) > 0) {
+    indi <- max(which(xi < za[i]))
+    xi <- xi[indi:length(xi)]
+    xi[1] <- za[i]
+  }
+  if (sum(xi > zb[i]) > 0) {
+    indi <- min(which(xi > zb[i]))
+    xi <- xi[1:indi]
+    xi[indi] <- zb[i]
+  }
+
+  ## Safety net for grid collapse: the two trims above are only
+  ## guaranteed to leave >= 2 points in `xi` when za[i] < zb[i] with
+  ## enough of a gap that at least one of the log-spaced nodes `j`
+  ## falls strictly between them. If za[i] and zb[i] end up equal, or
+  ## reversed (za[i] >= zb[i]), or close enough together that every
+  ## node lands outside [za[i], zb[i]], `xi` can collapse to a single
+  ## point (or, in principle, zero). That is a real edge case in this
+  ## port (observed with the package's own example data under
+  ## target_HR = NA / the circular-target scenario), not merely a
+  ## translation slip: RTSA's own R source has the identical unguarded
+  ## seq(1, length(xi) - 1, 1) pattern below, which throws "wrong sign
+  ## in 'by' argument" for length(xi) <= 1 rather than the empty
+  ## sequence a length-based idiom like seq_len(length(xi) - 1) would
+  ## give (NB: 1:0 is NOT such an idiom -- it evaluates to c(1, 0), a
+  ## length-2 *descending* sequence, not an empty one; seq_len(0) is
+  ## the correct empty-sequence idiom and is what the fix below uses).
+  ## As of 0.2.7, this collapse is also actively prevented from
+  ## occurring during normal operation by a clamp in
+  ## .rtsa2_beta_boundary_core() that keeps za[i] from ever getting
+  ## closer than a small margin to zb[i] in the first place -- this
+  ## block is the last-resort fallback if it still happens (e.g. from
+  ## a future caller invoking this function directly with unclamped
+  ## za/zb). Rather than erroring, or silently returning a physically
+  ## meaningless single-point "grid" (which would feed NA/garbage
+  ## Simpson weights into the recursion via out-of-range zj[3]/zj[m-2]
+  ## lookups below), we widen back out to the full two-point interval
+  ## [za[i], zb[i]] -- inserting a minimal positive width if the two
+  ## are equal or reversed -- so the Simpson's-rule construction below
+  ## always has a valid (if minimal, 3-node) grid to build.
+  if (length(xi) < 2L) {
+    lo <- za[i]
+    hi <- zb[i]
+    if (!(hi > lo)) hi <- lo + 1e-8
+    xi <- c(lo, hi)
+  }
+
+  m <- length(xi) * 2 - 1
+  zj <- numeric(m)
+  zj[seq(1, m, 2)] <- xi
+  zj[seq(2, m - 1, 2)] <- (xi[seq_len(length(xi) - 1)] +
+                             xi[seq(2, length(xi), 1)]) / 2
+
+  ij <- 1:m
+  wj <- numeric(m)
+  for (k in ij) {
+    if (k == 1) {
+      wj[k] <- (1 / 6) * (zj[3] - zj[1])
+    } else if (k %in% .rtsa2_seq_by2(3, m - 2)) {
+      wj[k] <- (1 / 6) * (zj[k + 2] - zj[k - 2])
+    } else if (k %in% .rtsa2_seq_by2(2, m - 1)) {
+      wj[k] <- (4 / 6) * (zj[k + 1] - zj[k - 1])
+    } else {
+      wj[k] <- (1 / 6) * (zj[m] - zj[m - 2])
+    }
+  }
+  list(zj = zj, wj = wj)
 }
 
-.rtsa_fcab <- function(last, nint, yam1, ybm1, h, x, stdv, delta) {
-  grid2 <- yam1 + h * seq.int(0, nint)
-  f <- last[seq_len(nint + 1L)] *
-    .rtsa_gfunc((x - grid2) / stdv, delta = delta) / stdv
-  .rtsa_trap(f, nint, h)
+## Ported from src/first.cpp's init_int(): seeds the running density at
+## the transition into look 2, evaluated on look 1's z_n_w() grid, as a
+## Normal(delta * sd_incr[1], 1) density (i.e. under the fixed
+## alternative-hypothesis drift), weighted by the Simpson weights.
+## `stdv1` is the scalar info$sd_incr[1] -- the C++ original receives
+## the full sd_incr vector but only ever reads its first element.
+.rtsa2_init_int <- function(wj, zj, delta, stdv1) {
+  wj * stats::dnorm(zj, mean = delta * stdv1, sd = 1)
 }
 
-.rtsa_qpos <- function(xq, last, nint, yam1, ybm1, stdv) {
-  hlast <- (ybm1 - yam1) / nint
-  grid3 <- yam1 + hlast * seq.int(0, nint)
-  f <- last[seq_len(nint + 1L)] *
-    stats::pnorm((grid3 - xq) / stdv)
-  .rtsa_trap(f, nint, hlast)
+## Ported from src/first.cpp's recur_int(): propagates the running
+## density from look (k-1)'s grid (zj, on look (k-1)'s Z-scale) onto
+## look k's grid (zj_up, on look k's Z-scale), using the independent-
+## increment Gaussian transition density between the two looks'
+## Y-scale (information-scale) values, under the fixed drift delta.
+## `stdv` is a matrix with column 1 = sd_incr, column 2 = sd_proc (one
+## row per look), matching RTSA's own `matrix(unlist(info), ncol = 2)`.
+## RTSA's own beta_boundary() always calls this with bs = FALSE.
+.rtsa2_recur_int <- function(k, stdv, zj, last, zj_up, wj_up, delta, bs) {
+  y_prev <- zj * stdv[k - 1L, 2L]
+  y_curr <- zj_up * stdv[k, 2L]
+  sd_k <- stdv[k, 1L]
+  ratio <- stdv[k, 2L] / sd_k
+
+  last_up <- vapply(seq_along(zj_up), function(idx) {
+    arg <- if (isTRUE(bs)) {
+      (y_prev - y_curr[idx]) / sd_k
+    } else {
+      (y_curr[idx] - y_prev) / sd_k
+    }
+    sum(last * ratio * stats::dnorm(arg, mean = delta * sd_k, sd = 1))
+  }, numeric(1))
+
+  last_up * wj_up
 }
 
-.rtsa_first <- function(ya, yb, stdv, nint, delta) {
-  hh <- (yb - ya) / nint
-  ## Preserve the indexing used by RTSA's old TSA translation literally:
-  ## 1:(nint)+1 is parsed by R as (1:nint)+1.
-  ## RTSA used a fixed 5000-cell buffer.  Keep its literal indexing,
-  ## but size the buffer to the actual grid so large first wedges cannot
-  ## silently run beyond the allocated vector.
-  last <- numeric(nint + 1L)
-  j <- seq_len(nint) + 1L
-  grid <- ya + hh * (j - 1L)
-  last[j] <- .rtsa_gfunc(grid / stdv, delta = delta) / stdv
-  last
+## Ported from src/first.cpp's prob(): the cumulative crossing
+## probability of a candidate boundary xq at look k, given the running
+## density on look (k-1)'s grid (zj) and the fixed drift delta.
+## searchfunc() always calls this with bs = TRUE for the beta/futility
+## search.
+.rtsa2_prob <- function(xq, last, zj, k, stdv, bs, delta) {
+  y_prev <- zj * stdv[k - 1L, 2L]
+  sd_k <- stdv[k, 1L]
+  p <- if (isTRUE(bs)) {
+    stats::pnorm((xq - y_prev) / sd_k, mean = delta * sd_k, sd = 1)
+  } else if (delta != 0) {
+    stats::pnorm((y_prev - xq) / sd_k, mean = -delta * sd_k, sd = 1)
+  } else {
+    stats::pnorm((y_prev - xq) / sd_k, mean = delta * sd_k, sd = 1)
+  }
+  sum(last * p)
 }
 
-.rtsa_other <- function(ya, yb, i, stdv, last, nints) {
-  hh <- (yb[i] - ya[i]) / nints[i]
-  hlast <- (yb[i - 1L] - ya[i - 1L]) / nints[i - 1L]
-  grid1 <- ya[i] + hh * seq.int(0, nints[i])
-  vapply(
-    grid1,
-    function(x)
-      .rtsa_fcab(
-        last = last,
-        nint = nints[i - 1L],
-        yam1 = ya[i - 1L],
-        ybm1 = yb[i - 1L],
-        h = hlast,
-        x = x,
-        stdv = stdv,
-        delta = 0
-      ),
-    numeric(1)
-  )
-}
-
-.rtsa_searchfunc_old <- function(last, nints, i, valSF, stdv, ya, yb,
-                                 maxnn = 50L, eps = 1e-7) {
-  upper <- yb[i - 1L]
+## Ported from RTSA's searchfunc(): finds the boundary value (on the
+## Y/information scale) at look i whose cumulative crossing probability
+## (.rtsa2_prob()) equals the target incremental spend `as`, by an
+## expanding-then-refining search -- ported literally, including its
+## specific step-halving search pattern, rather than replaced with a
+## smooth root-finder, so the numerics track RTSA's rather than merely
+## its target. The `iter > 100000` safety cutoff below is NOT in RTSA's
+## own code (its while(cond) loop has no iteration cap); it is a
+## disclosed tsahr-side robustness addition so a pathological input
+## cannot hang the R session, and only ever fires with a warning on
+## non-convergence -- it does not alter the result in any case that
+## would have converged under RTSA's own code.
+.rtsa2_searchfunc <- function(last, zj, i, as, stdv, za, zb, tol, bs, delta) {
+  maxnn <- 50
+  upper <- zb[i - 1L] * stdv[i, 2L]
+  if (isTRUE(bs)) upper <- za[i - 1L] * stdv[i, 2L]
   del <- 10
-  qout <- .rtsa_qpos(
-    xq = upper, last = last, nint = nints[i - 1L],
-    yam1 = ya[i - 1L], ybm1 = yb[i - 1L], stdv = stdv
-  )
+  qout <- .rtsa2_prob(xq = upper, last = last, zj = zj, k = i, stdv = stdv,
+                       bs = bs, delta = delta)
 
+  cond <- TRUE
   iter <- 0L
-  best_upper <- upper
-  best_err <- abs(qout - valSF)
-  converged <- best_err <= eps
-
-  while (!converged && iter < 100000L) {
+  while (cond) {
     iter <- iter + 1L
-
-    if (qout > valSF + eps) {
+    if (abs(qout - as) <= tol) {
+      cond <- FALSE
+      break
+    }
+    if (qout > as + tol) {
       del <- del / 10
-      for (k in seq_len(maxnn)) {
+      for (k in 1:maxnn) {
+        if (isTRUE(bs)) upper <- upper - 2 * del
         upper <- upper + del
-        qout <- .rtsa_qpos(
-          xq = upper, last = last, nint = nints[i - 1L],
-          yam1 = ya[i - 1L], ybm1 = yb[i - 1L], stdv = stdv
-        )
-        err <- abs(qout - valSF)
-        if (err < best_err) {
-          best_err <- err
-          best_upper <- upper
-        }
-        if (qout <= valSF + eps) break
-      }
-    } else if (qout < valSF - eps) {
-      del <- del / 10
-      for (k in seq_len(maxnn)) {
-        upper <- upper - del
-        qout <- .rtsa_qpos(
-          xq = upper, last = last, nint = nints[i - 1L],
-          yam1 = ya[i - 1L], ybm1 = yb[i - 1L], stdv = stdv
-        )
-        err <- abs(qout - valSF)
-        if (err < best_err) {
-          best_err <- err
-          best_upper <- upper
-        }
-        if (qout >= valSF - eps) break
+        qout <- .rtsa2_prob(xq = upper, last = last, zj = zj, k = i,
+                             stdv = stdv, bs = bs, delta = delta)
+        if (qout <= as + tol) break
       }
     }
-
-    converged <- abs(qout - valSF) <= eps
+    if (qout < as - tol) {
+      del <- del / 10
+      for (k in 1:maxnn) {
+        if (isTRUE(bs)) upper <- upper + 2 * del
+        upper <- upper - del
+        qout <- .rtsa2_prob(xq = upper, last = last, zj = zj, k = i,
+                             stdv = stdv, bs = bs, delta = delta)
+        if (qout >= as - tol) break
+      }
+    }
+    if (iter > 100000L) {
+      warning(sprintf(
+        "RTSA-ported futility search did not converge at look %d (residual %.3g); using the closest value found.",
+        i, abs(qout - as)
+      ), call. = FALSE)
+      break
+    }
   }
-
-  if (!converged) {
-    warning(
-      sprintf(
-        "RTSA futility-boundary search did not converge at look %d; using the closest value found (absolute error %.3g).",
-        i, best_err
-      ),
-      call. = FALSE
-    )
-    upper <- best_upper
-  }
-
-  yb[i] <- upper
-  yb
+  upper / stdv[i, 2L]
 }
 
+## RTSA's beta-spending increments (unchanged from previous versions --
+## this formula already matched RTSA's real esOF(beta/side, timing) at
+## the side = 1 convention beta_boundary() is actually called with; see
+## the module-level VALIDATION note near the top of this file).
+##
+## RE-VERIFIED in 0.2.7.4 against a specific claim that this should be
+## `qnorm(1 - beta)` (i.e. no `/2`), on the grounds that RTSA's
+## `esOF(alpha, timing)` is itself `2*(1-pnorm(qnorm(1-alpha)/sqrt(t)))`.
+## Checked directly against the actual RTSA 0.2.2 source
+## (R/RTSA_helperfunctions.R): `esOF()` is
+##   as_cum[i] <- 2*(1 - pnorm(qnorm(1-alpha/2)/sqrt(timing[i])))
+## i.e. the `/2` IS present in the real function -- the claim was
+## incorrect, and applying it would have reintroduced a real error
+## (dividing the effective beta-spend rate in half, disproportionately
+## understating early-look futility boundaries -- consistent with the
+## "beta-bounds are far from RTSA, and further off at earlier looks"
+## symptom that prompted the claim in the first place, but that
+## symptom's actual cause was the missing information-scale root search
+## below, not this formula). Do not change this back to `qnorm(1-beta)`
+## without a fresh, direct read of RTSA's actual esOF() source.
 .rtsa_beta_spend_OF <- function(t, beta, tol = 1e-13) {
   t <- as.numeric(t)
-  if (any(!is.finite(t)) || any(t <= 0))
-    stop("information fractions must be finite and > 0")
+  if (any(!is.finite(t)) || any(t < 0))
+    stop("information fractions must be finite and >= 0")
   if (!is.finite(beta) || beta <= 0 || beta >= 1)
     stop("beta must be strictly between 0 and 1")
 
+  ## t == 0 is deliberately ALLOWED (0.2.7.4 fix): the 0.2.7.4 rm_bs
+  ## suppression mechanism in .rtsa2_beta_boundary_core() (see below)
+  ## zeroes the first `rm_bs` entries of the timing vector it passes in
+  ## here, by design -- that is how RTSA's own two-pass root search
+  ## suppresses an early look's spend after the first pass found a
+  ## negative futility boundary there. This function's formula already
+  ## handles t = 0 correctly with no special-casing needed:
+  ## qnorm(1-beta/2) is always > 0 for beta in (0,1), so dividing by
+  ## sqrt(0) = 0 gives +Inf (not NaN, and R does not warn on this),
+  ## and pnorm(Inf, lower.tail = FALSE) = 0 exactly -- i.e. t = 0
+  ## naturally gives zero cumulative spend, exactly the "no information,
+  ## no spend yet" semantics that entry is meant to have. A stricter
+  ## `t <= 0` guard here (as in 0.2.7-0.2.7.3) rejected these entries
+  ## outright, which made every rm_bs > 0 call -- i.e. the entire second
+  ## pass of the 0.2.7.4 root search -- fail unconditionally with this
+  ## function's own error. That was the actual, near-universal cause of
+  ## the "root search did not converge" failures reported against the
+  ## first 0.2.7.4 build, not a genuine non-convergence of the root
+  ## search itself (confirmed by direct reproduction: the same design,
+  ## re-run in an independent Python port of this exact algorithm,
+  ## converges immediately once this guard allows t = 0 through).
   cum <- 2 * stats::pnorm(
     stats::qnorm(1 - beta / 2) / sqrt(t),
     lower.tail = FALSE
@@ -460,209 +665,416 @@
   list(betaValuesCumulated = cum, betaValuesDelta = delta)
 }
 
-.rtsa_get_inner_wedge <- function(informationFractions, beta, fakeIFY,
-                                  zninf = -20, tol = 1e-13) {
-  t <- as.numeric(informationFractions)
+## Preventive clamp (0.2.7): keeps the non-binding futility boundary
+## za[i] from ever landing closer than `gap` to the fixed efficacy wall
+## zb[i] at the same look, which is what actually caused the grid
+## collapse .rtsa2_z_n_w() now also guards against defensively (see its
+## own comment) -- this is the primary fix; that one is the safety net.
+## za[i] is set from one of three branches in the core recursion above
+## (a fixed sentinel, a fixed 0, or an unconstrained root found by
+## .rtsa2_searchfunc()); none of those three is otherwise guaranteed to
+## stay below zb[i], and the sentinel/0 cases were not observed to
+## collide with any realistic zb[i] in testing, but are clamped too for
+## uniformity and future-proofing rather than relying on that holding.
+## The observed failure mode (package example data, target_HR = NA) was
+## the .rtsa2_searchfunc() branch returning a value that landed at or
+## past zb[i] at a late look, where the non-binding futility boundary is
+## expected to approach the efficacy boundary closely by design (they
+## are constructed to meet exactly at the final, t = 1 look) -- `gap` is
+## deliberately tiny (Z-scale, not probability-scale) so this clamp only
+## ever bites in that near-convergence regime and does not perturb any
+## well-separated boundary value.
+##
+## IMPORTANT (0.2.7.4): this clamp is applied to every look EXCEPT the
+## final one. The information-scale root search added in 0.2.7.4
+## (.rtsa2_find_warp_root(), .rtsa2_inf_warp()) needs za[nn] to be able
+## to reach -- and, for `uniroot()` to bracket a root at all, briefly
+## cross -- zb[nn] exactly as the candidate warp factor is varied; a
+## fixed-gap ceiling on za[nn] would make that impossible (the search
+## objective, za[nn] - zb[nn], could then never change sign), so the
+## final look is deliberately left unclamped here and instead protected
+## purely by .rtsa2_z_n_w()'s own degenerate-grid fallback. Not
+## exported.
+.rtsa2_clamp_za_below_zb <- function(za_i, zb_i, gap = 1e-6) {
+  min(za_i, zb_i - gap)
+}
+
+## Ported from RTSA's beta_boundary() (R/RTSA_helperfunctions.R),
+## specialised to es_beta = "esOF" and to RTSA's own side = 1 convention
+## for the futility construction (see the block comment above).
+## `alpha_ubound` is the ALREADY-COMPUTED efficacy (alpha) boundary at
+## every entry of `t`, used as the fixed upper wall throughout the
+## recursion -- this (not a symmetric substitute) is what RTSA's own
+## `zb <- alpha_bound` uses.
+## `org_t` and `beta_timing`, when supplied directly, override the
+## t*warp_root / rm_bs-zeroing derivation below -- this is what lets
+## .rtsa_beta_boundary_analysis() (the type = "analysis"/design_R
+## branch, added in 0.2.7.7) reuse this exact recursion with its own,
+## differently-derived info-scale (the observed information fractions
+## themselves, unwarped) and beta-spending timeline (observed fraction
+## of the DESIGN's total information, inf_frac / design_R) instead of
+## the design-mode t*warp_root pairing. When both are NULL (the
+## original, design-mode call signature), behaviour is unchanged.
+.rtsa2_beta_boundary_core <- function(t, beta, delta, alpha_ubound,
+                                       warp_root = 1, rm_bs = 0L,
+                                       org_t = NULL, beta_timing = NULL,
+                                       zninf = -20, tol = 1e-15, r = 18) {
+  t <- as.numeric(t)
   nn <- length(t)
   if (nn < 1L) stop("at least one information fraction is required")
-  if (any(!is.finite(t)) || any(t <= 0))
-    stop("information fractions must be finite and > 0")
-  if (any(diff(t) < 0))
-    stop("information fractions must be non-decreasing")
+  if (length(alpha_ubound) != nn)
+    stop("alpha_ubound must have the same length as t")
+
+  ## RTSA's own beta_boundary() keeps two DIFFERENT fraction scales
+  ## alive at once: `beta_timing` (== `inf_frac`, possibly with its
+  ## first `rm_bs` entries zeroed out) drives which fraction of beta is
+  ## considered spent at each look, while `org_inf_frac` (==
+  ## `inf_frac * warp_root`) drives the actual information/standard-
+  ## deviation scale (info$sd_incr, info$sd_proc) the recursion runs
+  ## on. These are NOT the same vector whenever warp_root != 1 -- see
+  ## the block comment on .rtsa_beta_boundary() below for why a
+  ## warp_root != 1 is needed at all.
+  if (is.null(beta_timing)) {
+    beta_timing <- t
+    if (rm_bs > 0L) {
+      beta_timing <- c(rep(0, rm_bs), beta_timing[-seq_len(rm_bs)])
+    }
+  }
+  if (length(beta_timing) != nn)
+    stop("beta_timing must have the same length as t")
+  outbeta <- .rtsa_beta_spend_OF(beta_timing, beta, tol = tol)
+
+  if (is.null(org_t)) org_t <- t * warp_root
+  if (length(org_t) != nn)
+    stop("org_t must have the same length as t")
+  info <- list(sd_incr = sqrt(c(org_t[1L], diff(org_t))), sd_proc = sqrt(org_t))
+  stdv <- cbind(info$sd_incr, info$sd_proc)  ## col 1 = sd_incr, col 2 = sd_proc
 
   za <- numeric(nn)
-  zb <- numeric(nn)
+  zb <- alpha_ubound
   ya <- numeric(nn)
-  yb <- numeric(nn)
-  nints <- numeric(nn)
-
-  outbeta <- .rtsa_beta_spend_OF(t, beta, tol = tol)
-  sdincr <- sqrt(c(t[1L], diff(t)))
-  sdproc <- sqrt(t)
+  yb <- zb * info$sd_proc
 
   d1 <- outbeta$betaValuesDelta[1L]
   d1 <- min(beta, max(0, d1))
-
-  if (d1 < tol) {
+  if (d1 == 0) {
     za[1L] <- zninf
-    ya[1L] <- za[1L] * sdincr[1L]
   } else if (d1 == beta) {
     za[1L] <- 0
-    ya[1L] <- 0
   } else {
-    za[1L] <- stats::qnorm(d1)
-    ya[1L] <- za[1L] * sdincr[1L]
+    za[1L] <- stats::qnorm(d1, mean = info$sd_proc[1L] * delta, sd = 1)
   }
+  ## Preventive clamp (0.2.7), skipped on the final look (0.2.7.4) --
+  ## see .rtsa2_clamp_za_below_zb() above.
+  if (nn > 1L) za[1L] <- .rtsa2_clamp_za_below_zb(za[1L], zb[1L])
+  ya[1L] <- za[1L] * info$sd_incr[1L]
 
-  zb[1L] <- -za[1L]
-  yb[1L] <- -ya[1L]
-
-  nints[1L] <- max(
-    1L,
-    round(abs(yb[1L] - ya[1L]) / 0.05 * sdincr[1L]) + 1L
-  )
-
+  zj_wj <- .rtsa2_z_n_w(r = r, info = info, za = za, zb = zb, i = 1L, delta = delta)
+  zj <- zj_wj$zj
+  wj <- zj_wj$wj
   last <- NULL
 
   if (nn >= 2L) {
     for (i in 2:nn) {
       if (i == 2L) {
-        last <- .rtsa_first(
-          ya = ya[1L], yb = yb[1L], stdv = sdincr[1L],
-          nint = nints[1L], delta = 0
-        )
+        last <- .rtsa2_init_int(wj = wj, zj = zj, delta = delta,
+                                 stdv1 = info$sd_incr[1L])
       }
 
       di <- outbeta$betaValuesDelta[i]
-      di <- min(1, max(0, di))
+      if (di <= 0 || di >= 1) {
+        di <- min(1, di)
+        di <- max(0, di)
+      }
 
       if (di < tol) {
         za[i] <- zninf
-        ya[i] <- za[i] * sdincr[i]
-      } else if (di == 1) {
+        if (i < nn) za[i] <- .rtsa2_clamp_za_below_zb(za[i], zb[i])
+        ya[i] <- za[i] * info$sd_incr[i]
+      } else if (di == beta) {
         za[i] <- 0
-        ya[i] <- 0
+        if (i < nn) za[i] <- .rtsa2_clamp_za_below_zb(za[i], zb[i])
+        ya[i] <- za[i] * info$sd_incr[i]
       } else {
-        yb <- .rtsa_searchfunc_old(
-          last = last, nints = nints, i = i, valSF = di,
-          stdv = sdincr[i], ya = ya, yb = yb
+        za[i] <- .rtsa2_searchfunc(
+          last = last, zj = zj, i = i, as = di, stdv = stdv,
+          za = za, zb = zb, tol = tol, bs = TRUE, delta = delta
         )
-        zb[i] <- yb[i] / sdproc[i]
-        ya[i] <- -yb[i]
-        za[i] <- -zb[i]
+        ## Preventive clamp (0.2.7), skipped on the final look (0.2.7.4):
+        ## this is the branch that actually triggered the grid-collapse
+        ## crash for looks before the final one -- see
+        ## .rtsa2_clamp_za_below_zb() above for why.
+        if (i < nn) za[i] <- .rtsa2_clamp_za_below_zb(za[i], zb[i])
+        ya[i] <- za[i] * info$sd_proc[i]
       }
 
-      nints[i] <- max(
-        1L,
-        round(abs(yb[i] - ya[i]) / 0.05 * sdincr[i]) + 1L
-      )
-
       if (i != nn) {
-        last <- .rtsa_other(
-          ya = ya, yb = yb, i = i, stdv = sdincr[i],
-          last = last, nints = nints
+        zj_wj_up <- .rtsa2_z_n_w(r = r, info = info, za = za, zb = zb,
+                                  i = i, delta = delta)
+        last <- .rtsa2_recur_int(
+          k = i, stdv = stdv, zj = zj, last = last,
+          zj_up = zj_wj_up$zj, wj_up = zj_wj_up$wj, delta = delta, bs = FALSE
         )
+        zj <- zj_wj_up$zj
+        wj <- zj_wj_up$wj
       }
     }
   }
 
-  ## This is the RTSA/old-TSA empirical drift construction:
-  ## the final inner-wedge half-width is added to the supplied fake
-  ## information-yield/final-alpha reference.
-  testDrift <- fakeIFY + abs(ya[nn])
-  futility_z <- za + sdproc * testDrift
-
   list(
     inf_frac = t,
-    futility_z = futility_z,
     za = za,
-    testDrift = testDrift,
+    ya = ya,
+    zb = zb,
+    yb = yb,
+    delta = delta,
     betaValuesCumulated = outbeta$betaValuesCumulated,
     betaValuesDelta = outbeta$betaValuesDelta,
-    sdincr = sdincr,
-    sdproc = sdproc,
-    ya = ya,
-    yb = yb,
-    nints = nints
+    sdincr = info$sd_incr,
+    sdproc = info$sd_proc
+  )
+}
+
+## Ported from RTSA's inf_warp() (R/RTSA_helperfunctions.R): the
+## objective function RTSA's own uniroot() call drives to zero. Returns
+## the gap between the final look's futility boundary (under a
+## candidate information-scale warp factor `x`) and the final look's
+## fixed efficacy boundary -- zero exactly when the non-binding
+## futility construction reaches the efficacy boundary precisely at the
+## definitive final look, which is what a properly power-matched
+## two-sided non-binding design requires.
+.rtsa2_inf_warp <- function(x, t, beta, delta, alpha_ubound, rm_bs = 0L) {
+  ans <- .rtsa2_beta_boundary_core(
+    t = t, beta = beta, delta = delta, alpha_ubound = alpha_ubound,
+    warp_root = x, rm_bs = rm_bs
+  )
+  ans$za[length(t)] - alpha_ubound[length(t)]
+}
+
+## Ported from the root-finding loop inside RTSA's boundaries()
+## (side == 2, futility == "non-binding", type == "design" branch):
+## `uniroot()` needs a bracket whose endpoints have opposite signs, and
+## RTSA's own code does not know that bracket in advance, so it slides
+## a narrow window of width `step` upward (starting at
+## [start - step, start]) until `uniroot()` succeeds, for up to
+## `max_iter` attempts. This is what actually determines the
+## information-scale inflation ("warp_root", RTSA's `root`) needed for
+## the non-binding futility construction to reach the fixed efficacy
+## boundary exactly at the definitive final look -- see the block
+## comment on .rtsa_beta_boundary() below for why this step exists at
+## all and what happens without it.
+.rtsa2_find_warp_root <- function(t, beta, delta, alpha_ubound, rm_bs = 0L,
+                                   start = 0.95, step = 0.02, max_iter = 50L,
+                                   tol_root = 1e-9) {
+  f <- function(x) {
+    .rtsa2_inf_warp(x, t = t, beta = beta, delta = delta,
+                     alpha_ubound = alpha_ubound, rm_bs = rm_bs)
+  }
+  upper <- start
+  for (n_itr in seq_len(max_iter)) {
+    lower <- upper - step
+    root <- tryCatch(
+      stats::uniroot(f, lower = lower, upper = upper, tol = tol_root)$root,
+      error = function(e) NULL
+    )
+    if (!is.null(root)) return(root)
+    upper <- upper + step
+  }
+  stop(
+    "Non-binding futility boundaries could not be computed (the RTSA-style ",
+    "information-scale root search did not converge). Consider setting a ",
+    "different target_HR/power, or treat the futility band as unavailable ",
+    "for this design."
   )
 }
 
 ## Public internal entry point used by tsa_hr().
 ##
-## This follows RTSA's `tsa_beta_bound = TRUE` analysis branch.  The
-## null inner wedge is shifted by RTSA's `fakeIFY` reference and its
-## final half-width; the definitive futility boundary is then set to
-## qnorm(1-alpha/2) in the non-overpowered case.
+## Constructs RTSA's non-binding futility boundary sequence for the
+## observed information-fraction timeline `t`, using the corresponding
+## already-computed alpha (efficacy) boundary `c_vec_alpha` (same
+## length/order as `t`) as the fixed upper wall throughout the
+## recursion, and RTSA's own fixed standardised drift
+## delta = |qnorm(alpha/2) + qnorm(beta)| (side = 2, i.e. this
+## package's two-sided efficacy design).
+##
+## ** RTSA-style information-scale warp, added in 0.2.7.4. ** A naive
+## reading of RTSA's beta_boundary() recursion (what 0.2.7-0.2.7.3
+## implemented) uses the SAME information fractions both for looking up
+## how much beta has been spent at each look and for the standard-
+## deviation scale the recursion runs on -- i.e. implicitly always
+## "warp_root = 1". RTSA's own boundaries() does NOT do this: it always
+## calls beta_boundary() through a root-finding step
+## (`uniroot(inf_warp, ...)`, ported above as .rtsa2_find_warp_root())
+## that searches for a scalar inflation of the information SCALE alone
+## (org_inf_frac = inf_frac * root; the beta-spending fractions
+## themselves stay unwarped) such that the resulting futility boundary
+## lands EXACTLY on the fixed efficacy boundary at the definitive final
+## look. Without this, the futility boundaries a naive port produces
+## are systematically too conservative relative to a live
+## RTSA::boundaries() call across the whole schedule, and the final
+## look generally does not meet the efficacy boundary at all -- exactly
+## the two discrepancies reported against 0.2.7.3. RTSA's own code then
+## repeats this root search a second time, now suppressing (zeroing the
+## beta-spending fraction of) whichever early looks came back with a
+## negative futility boundary on the first pass
+## (`rm_bs = sum(lb$za < 0)`), and re-solves for the root again with
+## that adjustment -- this is also why RTSA's real output does not show
+## a small negative number at an early look where essentially no
+## futility band exists yet: that look's beta-spend gets zeroed on the
+## second pass, which routes it through the zninf sentinel (see
+## .rtsa2_beta_boundary_core() above) instead. Both passes are ported
+## faithfully below, including running the suppression step exactly
+## once (RTSA's own code does not iterate this to convergence, so
+## neither does this port).
 .rtsa_beta_boundary <- function(t, alpha, beta, c_vec_alpha) {
   t <- as.numeric(t)
   if (length(t) != length(c_vec_alpha))
     stop("t and c_vec_alpha must have the same length")
 
-  ## This is the exact retrospective `tsa_beta_bound` branch in RTSA:
-  ## if observed information exceeds the required information size, the
-  ## inner-wedge calculation is done only for t < 1 and the definitive
-  ## boundary is the conventional two-sided alpha quantile.
+  ## RTSA's own fixed drift for the non-binding futility construction
+  ## (boundaries(), side == 2, futility == "non-binding", type ==
+  ## "design" branch: `delta <- abs(qnorm(alpha/side)+qnorm(beta))`
+  ## with side = 2), NOT derived empirically from the futility wedge
+  ## itself.
+  delta <- abs(stats::qnorm(alpha / 2) + stats::qnorm(beta))
+
   over_power <- any(t > 1)
 
-  if (over_power) {
-    fakeIFY <- stats::qnorm(1 - alpha / 2, lower.tail = TRUE)
-    timing_beta <- t[t < 1]
+  ## ** FIXED in 0.2.7.19. ** This used to assume "by construction of any
+  ## properly normalised two-sided alpha-spending function, the efficacy
+  ## boundary at t = 1 is exactly qnorm(1-alpha/2)" and substituted that
+  ## constant here. That assumption is WRONG for RTSA's actual discretised
+  ## O'Brien-Fleming-type spending recursion: the equality holds only for a
+  ## SINGLE look (no earlier spending); with more looks the final wall is
+  ## LARGER, and it grows with the number of looks (e.g. 2.014 for 4 even
+  ## looks, 2.185 for 100 even looks at alpha = 0.05) -- it depends on the
+  ## schedule, not on a continuous-monitoring limit. Confirmed against a
+  ## live RTSA reconstruction: for one real
+  ## schedule, RTSA's own final alpha boundary was 2.014090377368289, not
+  ## qnorm(1-alpha/2) = 1.959963984540054 -- a difference large enough to
+  ## materially shift the warp_root this function solves for (1.133242 vs.
+  ## the wrong 1.097193) and, via the tightening step below, the reported
+  ## final futility boundary itself (2.014090 vs. 1.959964).
+  ##
+  ## Fixed by recomputing the TRUE, schedule-dependent alpha boundary via
+  ## .obf_alpha_boundary() -- the same side = 2 FFT recursion used
+  ## everywhere else in this legacy engine, which is an APPROXIMATION of
+  ## RTSA's own Simpson recursion, not a validated reproduction of it
+  ## (final-look error 1.1e-3 on the 4-look schedule 0.25/0.5/0.75/1,
+  ## measured 0.2.7.21) -- run on timing_beta itself (the
+  ## observed pre-1 looks plus the definitive t = 1 point), rather than
+  ## reusing whichever `c_vec_alpha` the caller happened to already have.
+  ## This is correct and self-contained whether or not the caller's `t`
+  ## already contains an exact t = 1 entry (compare .tsahr_legacy_
+  ## boundaries(), which sometimes supplies one and sometimes does not),
+  ## and it reproduces `c_vec_alpha`'s own pre-1 values exactly (same
+  ## recursion, same input points) wherever a direct comparison is
+  ## possible -- it is not a second, independent alpha engine.
+  timing_beta <- sort(unique(c(t[t < 1], 1)))
+  alpha_ubound_beta <- .obf_alpha_boundary(timing_beta, alpha = alpha)
+  final_alpha_bound <- utils::tail(alpha_ubound_beta, 1L)
+
+  if (length(timing_beta) == 1L) {
+    ## Degenerate case (0.2.7.4): no pre-DARIS interim look at all --
+    ## every observed information fraction already reached/exceeded 1
+    ## before this call (e.g. a single very informative early study).
+    ## The root search below has nothing to calibrate against: with
+    ## beta_timing == 1 exactly, the incremental beta-spend at the one
+    ## and only look is exactly `beta` by construction of any complete
+    ## spending function, which always hits the `d1 == beta` special
+    ## case (za = 0) in .rtsa2_beta_boundary_core() REGARDLESS of
+    ## warp_root -- so .rtsa2_inf_warp() is a constant function of the
+    ## warp factor and can never cross zero for any bracket, which is a
+    ## genuine mathematical degeneracy, not a search failure. Skip the
+    ## root search entirely and go straight to the definitive-look
+    ## convention used below in every other case too.
+    root2 <- 1
+    rm_bs <- 0L
+    ans <- list(
+      za = final_alpha_bound,
+      betaValuesCumulated = beta,
+      betaValuesDelta = beta,
+      sdincr = sqrt(timing_beta),
+      sdproc = sqrt(timing_beta),
+      ya = final_alpha_bound * sqrt(timing_beta)
+    )
   } else {
-    fakeIFY <- c_vec_alpha[length(c_vec_alpha)]
-    timing_beta <- t
+    ## PASS 1: find the information-scale warp with no suppression yet
+    ## (rm_bs = 0), matching RTSA's first uniroot()/beta_boundary() pair.
+    root1 <- .rtsa2_find_warp_root(
+      t = timing_beta, beta = beta, delta = delta,
+      alpha_ubound = alpha_ubound_beta, rm_bs = 0L,
+      start = 0.95, step = 0.02, max_iter = 50L
+    )
+    lb1 <- .rtsa2_beta_boundary_core(
+      t = timing_beta, beta = beta, delta = delta,
+      alpha_ubound = alpha_ubound_beta, warp_root = root1, rm_bs = 0L
+    )
+
+    ## PASS 2: re-find the warp with the early negative-za looks from
+    ## PASS 1 suppressed (their beta-spend fraction zeroed), matching
+    ## RTSA's second uniroot()/beta_boundary() pair. RTSA widens its
+    ## search window by 0.05 (not 0.02) for this second pass.
+    rm_bs <- sum(lb1$za < 0)
+    root2 <- .rtsa2_find_warp_root(
+      t = timing_beta, beta = beta, delta = delta,
+      alpha_ubound = alpha_ubound_beta, rm_bs = rm_bs,
+      start = 0.95, step = 0.05, max_iter = 50L
+    )
+    ans <- .rtsa2_beta_boundary_core(
+      t = timing_beta, beta = beta, delta = delta,
+      alpha_ubound = alpha_ubound_beta, warp_root = root2, rm_bs = rm_bs
+    )
   }
 
-  if (length(timing_beta) == 0L) {
-    boundary <- rep(fakeIFY, length(t))
-    boundary[t >= 1] <- fakeIFY
-    return(list(
-      boundary = boundary,
-      beta_spent = rep(beta, length(t)),
-      beta_spent_raw = rep(beta, length(t)),
-      beta_spent_delta = rep(NA_real_, length(t)),
-      auxiliary_futility = rep(NA_real_, length(t)),
-      testDrift = NA_real_,
-      fakeIFY = fakeIFY,
-      over_power = TRUE,
-      timing_beta = numeric(0)
-    ))
-  }
+  ## Definitive-final-look convention (kept from previous versions): no
+  ## distinct non-binding futility zone separate from the efficacy
+  ## decision at t = 1. With the warp/root search above, ans$za[last]
+  ## should already be extremely close to final_alpha_bound BY
+  ## CONSTRUCTION (that is exactly what the root search solves for);
+  ## this line only tightens that to exact equality rather than leaving
+  ## it at the root search's own numerical tolerance.
+  za_seq <- ans$za
+  za_seq[length(za_seq)] <- final_alpha_bound
 
-  ans <- .rtsa_get_inner_wedge(
-    informationFractions = timing_beta,
-    beta = beta,
-    fakeIFY = fakeIFY
+  match_pre <- match(t, timing_beta)
+  za_final <- utils::tail(za_seq, 1L)
+  boundary <- ifelse(t < 1, za_seq[match_pre], za_final)
+
+  ## Defensive tsahr-side safeguard, kept from previous versions and NOT
+  ## part of RTSA's own algorithm: a non-binding futility boundary should
+  ## never lie above the corresponding efficacy boundary. RTSA's own
+  ## recursion does not hard-enforce this at every step -- only the grid
+  ## construction two steps back clips indirectly -- so a pathological or
+  ## internally inconsistent alpha/beta/delta combination could in
+  ## principle let the search push a futility value above the efficacy
+  ## wall; this pmin() makes that impossible regardless. For any
+  ## self-consistent design (alpha, power, and delta mutually agreeing,
+  ## as tsahr's own DARIS/HARIS construction intends) this should be a
+  ## no-op in practice.
+  boundary <- pmin(boundary, c_vec_alpha)
+
+  ## RTSA returns NA only where the incremental beta spend at that look
+  ## was negligible (za pinned to the zninf = -20 sentinel) -- NOT for
+  ## every non-positive value (see the block comment above). With the
+  ## rm_bs suppression from PASS 2 now wired in, early looks that would
+  ## otherwise have shown a small negative number are routed through
+  ## this same sentinel and hidden here, matching RTSA's real behaviour;
+  ## any OTHER finite negative value RTSA's own (single-pass, non-
+  ## iterated) suppression does not happen to catch is, correctly, left
+  ## visible rather than hidden.
+  zninf <- -20
+  boundary[abs(boundary - zninf) < 1e-8] <- NA_real_
+
+  beta_cum <- ans$betaValuesCumulated
+  beta_delta <- ans$betaValuesDelta
+  beta_spent <- ifelse(t < 1, beta_cum[match_pre], beta)
+  beta_spent_delta <- ifelse(
+    t < 1, beta_delta[match_pre],
+    beta - utils::tail(beta_cum, 2L)[1L]
   )
-
-  if (over_power) {
-    ## RTSA: out_inner$ret2 <- c(out_inner$ret2, fakeIFY)
-    b <- c(ans$futility_z, fakeIFY)
-    ## The observed data can contain several post-DARIS looks.  All of
-    ## them are definitive t=1-equivalent analyses in tsahr, so use the
-    ## RTSA final value for every t >= 1.
-    boundary <- ifelse(t < 1, b[match(t, timing_beta)], fakeIFY)
-    ## RTSA exposes only positive futility boundaries.  The retrospective
-    ## tsa_beta_bound branch explicitly converts all ret2 <= 0 values to NA
-    ## before returning beta_ubound/beta_lbound.
-    boundary[boundary <= 0] <- NA_real_
-    ## Additional tsahr display guard: a non-binding futility boundary
-    ## must not lie outside the corresponding efficacy (alpha) boundary.
-    ## For t >= 1, c_vec_alpha is the definitive alpha boundary.
-    boundary <- pmin(boundary, c_vec_alpha)
-
-    beta_cum <- c(ans$betaValuesCumulated, beta)
-    beta_delta <- c(ans$betaValuesDelta, beta - utils::tail(ans$betaValuesCumulated, 1))
-    aux <- c(ans$za, NA_real_)
-  } else {
-    ## RTSA replaces the final inner-wedge value by qnorm(1-alpha/side).
-    ## With side=2 this is +1.959964.
-    b <- ans$futility_z
-    if (length(b) >= 1L)
-      b[length(b)] <- stats::qnorm(1 - alpha / 2, lower.tail = TRUE)
-    ## RTSA returns NA for non-positive futility boundaries.
-    b[b <= 0] <- NA_real_
-    ## Additional tsahr display guard: do not allow futility to extend
-    ## beyond the corresponding alpha/efficacy boundary.
-    boundary <- pmin(b, c_vec_alpha)
-    beta_cum <- ans$betaValuesCumulated
-    beta_delta <- ans$betaValuesDelta
-    aux <- ans$za
-  }
-
-  ## Map the RTSA analysis-mode result back to the original t vector.
-  if (over_power) {
-    beta_spent <- ifelse(t < 1,
-                         beta_cum[match(t, timing_beta)],
-                         beta)
-    beta_spent_delta <- ifelse(t < 1,
-                               beta_delta[match(t, timing_beta)],
-                               beta - utils::tail(ans$betaValuesCumulated, 1))
-    auxiliary <- ifelse(t < 1, aux[match(t, timing_beta)], NA_real_)
-  } else {
-    beta_spent <- beta_cum
-    beta_spent_delta <- beta_delta
-    auxiliary <- aux
-  }
+  auxiliary <- ifelse(t < 1, za_seq[match_pre], NA_real_)
 
   list(
     boundary = boundary,
@@ -670,15 +1082,16 @@
     beta_spent_raw = beta_spent,
     beta_spent_delta = beta_spent_delta,
     auxiliary_futility = auxiliary,
-    testDrift = ans$testDrift,
-    fakeIFY = fakeIFY,
+    delta = delta,
+    fakeIFY = final_alpha_bound,
     over_power = over_power,
     timing_beta = timing_beta,
+    warp_root = root2,
+    rm_bs = rm_bs,
     sdincr = ans$sdincr,
     sdproc = ans$sdproc,
     ya = ans$ya,
-    yb = ans$yb,
-    nints = ans$nints
+    yb = ans$yb
   )
 }
 
@@ -687,4 +1100,302 @@
   .rtsa_beta_boundary(
     t = t, alpha = alpha, beta = beta, c_vec_alpha = c_vec_alpha
   )$boundary
+}
+
+## -------------------------------------------------------------------------
+## RTSA's type = "analysis" (design_R) beta/futility branch
+##
+## ** Added in 0.2.7.7. 0.2.7.9 introduced a REGRESSION here (reverted in
+## 0.2.7.10) by switching design_R/delta/rm_bs to a side = 1,
+## futility = "none", right_power()-based calibration, on the strength of
+## an external "live RTSA reconstruction" that turned out to have queried
+## the wrong branch of RTSA's own source. That reconstruction is WRONG,
+## and has been directly falsified by re-reading RTSA's actual R/RTSA.R
+## top-level wrapper (not just boundaries.R in isolation), specifically
+## the branch that manufactures design_R when no prior design object is
+## supplied for a retrospective analysis:
+##
+##   bounds <- boundaries(timing = timing, alpha = alpha, beta = beta,
+##                         side = side, futility = futility,
+##                         es_alpha = es_alpha, es_beta = es_beta,
+##                         type = "design")
+##   design_R <- bounds$root
+##
+## `side = side` and `futility = futility` here are RTSA()'s OWN top-level
+## arguments -- i.e. whatever the caller passed to RTSA() itself (side = 2,
+## futility = "non-binding" for the two-sided, non-binding-futility TSA
+## this package performs), NOT hardcoded to side = 1 / futility = "none".
+## So the design_R calibration call this package needs to reproduce is
+## boundaries(..., side = 2, futility = "non-binding", type = "design")
+## -- exactly RTSA's non-binding-futility, two-pass warp_root search,
+## i.e. exactly .rtsa_beta_boundary() above, unchanged, called on the
+## observed timing. That is what 0.2.7.7 did. 0.2.7.9's side = 1 /
+## futility = "none" / right_power() path (boundaries.R lines ~69-90) is
+## a genuinely different RTSA code path -- the plain power/sample-size
+## root search used for a design that has NO futility boundaries at all
+## -- and is simply the wrong branch for this package's non-binding,
+## two-sided design, regardless of what any external reconstruction
+## computed against it.
+##
+## .rtsa_beta_boundary() above (unchanged since 0.2.7.6) is a faithful
+## port of RTSA's boundaries(..., side = 2, futility = "non-binding",
+## type = "design") branch: given only a timing vector, it root-finds its
+## own information-scale inflation (warp_root) from scratch so the
+## non-binding futility construction meets the efficacy boundary exactly
+## at the final look. That IS RTSA's own design_R for this design, per
+## the RTSA.R trace above -- not a mismatched substitute for it.
+##
+## RTSA's actual type = "analysis" branch this package's own design
+## reaches is boundaries.R's side == 2 / futility == "non-binding" /
+## `else` (i.e. type == "analysis") branch (lines ~436-492): it does NOT
+## run its own root search. It takes the design_R already solved above
+## and calls beta_boundary() THREE times against it -- once unsuppressed,
+## then twice more with rm_bs re-derived from the previous pass's
+## negative-za count -- see RTSA_helperfunctions.R's beta_boundary(), the
+## `if(!is.null(design_R))` block: the OBSERVED information fractions
+## (`inf_frac`) drive the actual info/sd scale UNWARPED
+## (`org_inf_frac <- inf_frac`, only appending `design_R` itself as a
+## final point if the observed data has not yet reached it), while the
+## beta-SPENDING budget consumed at each look is looked up against
+## `inf_frac / design_R` -- i.e. against how much of the eventually-
+## planned total information has actually accrued, not against the raw
+## observed fraction directly. The fixed drift `delta` this branch uses
+## is `abs(qnorm(alpha/side)+qnorm(beta))` evaluated at side = 2 (the
+## design's own overall sidedness, matching this package's alpha engine
+## and .rtsa_beta_boundary() above) -- NOT side = 1.
+##
+## tsahr has no separate prospective "design" phase of its own -- each
+## tsa_hr() call operates retrospectively on whatever information
+## fractions the included studies actually produced. This function
+## reproduces RTSA's own two-step pipeline for that situation: when
+## design_R is not supplied, it is calibrated by calling
+## .rtsa_beta_boundary() (the side = 2, non-binding-futility, two-pass
+## warp_root search) on the same observed timing `t`, then the design_R
+## branch below is run against that root.
+##
+## VALIDATION STATUS: a careful, line-by-line reading of RTSA's published
+## alpha_boundary()/beta_boundary()/boundaries()/RTSA() source, re-checked
+## against R/RTSA.R's own top-level wrapper (not just boundaries.R read in
+## isolation) after 0.2.7.9's regression. No R interpreter has been
+## available in any environment that has worked on this port, so this
+## remains a source trace, not a numerically executed match. Before
+## relying on this for anything but an approximate, illustrative futility
+## band, run a direct comparison against a live two-step RTSA call on
+## your own data, e.g.:
+##   design <- RTSA::boundaries(timing = c(<observed fractions>, 1),
+##                               alpha = 0.05, beta = 0.2, side = 2,
+##                               futility = "non-binding", es_alpha = "esOF",
+##                               es_beta = "esOF", type = "design")
+##   analysis <- RTSA::boundaries(timing = c(<observed fractions capped
+##                                  at design$root>), alpha = 0.05,
+##                                  beta = 0.2, side = 2,
+##                                  futility = "non-binding",
+##                                  es_alpha = "esOF", es_beta = "esOF",
+##                                  type = "analysis", design_R = design$root)
+##   analysis$beta_ubound; analysis$root
+##   tsahr:::.rtsa_beta_boundary_analysis(<same observed fractions>,
+##                                          alpha = 0.05, beta = 0.2,
+##                                          c_vec_alpha = <matching
+##                                          alpha_ubound>)
+## If you can run this comparison and it disagrees, please report the
+## EXACT boundaries() call you used (side, futility, es_alpha, es_beta)
+## alongside the numbers -- the 0.2.7.9 regression happened precisely
+## because a side/futility mismatch was not stated explicitly.
+## -------------------------------------------------------------------------
+
+.rtsa_beta_boundary_analysis <- function(t, alpha, beta, c_vec_alpha,
+                                          design_R = NULL) {
+  t <- as.numeric(t)
+  if (length(t) != length(c_vec_alpha))
+    stop("t and c_vec_alpha must have the same length")
+
+  ## Same fixed theoretical drift as the design-mode engine, at this
+  ## design's own side = 2 -- see the block comment above for why side = 1
+  ## (introduced in 0.2.7.9, reverted here) was wrong.
+  delta <- abs(stats::qnorm(alpha / 2) + stats::qnorm(beta))
+  final_alpha_bound <- stats::qnorm(1 - alpha / 2, lower.tail = TRUE)
+
+  ## STEP 1 (only when design_R is not externally supplied): manufacture
+  ## a design_R the same way RTSA's own RTSA() wrapper does when no prior
+  ## design object exists -- run the side = 2, futility = "non-binding",
+  ## type = "design" root search (.rtsa_beta_boundary(), PASS 1 + PASS 2)
+  ## on the observed timing itself, and take its warp_root as design_R.
+  if (is.null(design_R)) {
+    design_fit <- .rtsa_beta_boundary(
+      t = t, alpha = alpha, beta = beta, c_vec_alpha = c_vec_alpha
+    )
+    design_R <- design_fit$warp_root
+  }
+  if (!is.finite(design_R) || design_R <= 0)
+    stop("design_R must be a finite, strictly positive scalar")
+
+  ## STEP 2: extend/trim the observed timing onto the design endpoint,
+  ## exactly as RTSA's own RTSA() wrapper does before its type =
+  ## "analysis" call (R/RTSA.R): append design_R if the observed data has
+  ## not yet reached it; otherwise keep only the sub-design_R looks plus
+  ## design_R itself as the definitive point.
+  if (max(t) < design_R) {
+    t_ext <- c(t, design_R)
+  } else if (max(t) > design_R) {
+    t_ext <- c(t[t < design_R], design_R)
+  } else {
+    t_ext <- t
+  }
+
+  ## Alpha (efficacy) boundary at each point of t_ext: reuse the
+  ## already-computed c_vec_alpha wherever t_ext coincides with an
+  ## original observed look, and tsahr's own established definitive-
+  ## endpoint convention (final_alpha_bound = qnorm(1-alpha/2)) for the
+  ## design_R endpoint itself -- the same convention .rtsa_beta_boundary()
+  ## already applies at its own t = 1 endpoint above.
+  match_ext <- match(t_ext, t)
+  alpha_ubound_ext <- ifelse(
+    is.na(match_ext), final_alpha_bound, c_vec_alpha[match_ext]
+  )
+
+  if (length(t_ext) == 1L) {
+    ## Degenerate case, mirroring .rtsa_beta_boundary()'s own single-look
+    ## fallback above: nothing to calibrate a beta-spending timeline
+    ## against. Route straight to the definitive-look convention.
+    za_ext <- final_alpha_bound
+    beta_cum_ext <- beta
+    beta_delta_ext <- beta
+    rm_bs <- 0L
+  } else {
+    ## RTSA-style beta-spending timeline: fraction of the DESIGN's total
+    ## planned information consumed so far (inf_frac / design_R), not
+    ## the raw observed fraction -- the analysis-mode counterpart of the
+    ## design engine's t / warp_root pairing. Trimmed to strictly-less-
+    ## than-1 entries plus one synthetic final point at exactly 1
+    ## (design fully spent), matching RTSA's own beta_boundary() design_R
+    ## branch.
+    beta_timing_raw <- t_ext / design_R
+    beta_timing_raw <- c(beta_timing_raw[beta_timing_raw < 1], 1)
+    if (length(beta_timing_raw) != length(t_ext))
+      stop("internal error: beta timing and info-scale lengths diverged")
+
+    ## RTSA's own boundaries() calls beta_boundary() THREE times for this
+    ## (side = 2, futility = "non-binding", type = "analysis") branch:
+    ## once unsuppressed, then twice more with rm_bs re-derived from the
+    ## previous pass's negative-za count -- converging the suppression
+    ## fixed point WITHOUT any further root search (design_R itself stays
+    ## fixed throughout; only which early looks get suppressed can
+    ## change). No warp_root/inf_warp search happens at this level at
+    ## all.
+    rm_bs <- 0L
+    lb <- NULL
+    for (pass in 1:3) {
+      beta_timing <- beta_timing_raw
+      if (rm_bs > 0L) {
+        beta_timing <- c(rep(0, rm_bs), beta_timing[-seq_len(rm_bs)])
+      }
+      lb <- .rtsa2_beta_boundary_core(
+        t = t_ext, beta = beta, delta = delta, alpha_ubound = alpha_ubound_ext,
+        org_t = t_ext, beta_timing = beta_timing
+      )
+      rm_bs <- sum(lb$za < 0)
+    }
+
+    za_ext <- lb$za
+    beta_cum_ext <- lb$betaValuesCumulated
+    beta_delta_ext <- lb$betaValuesDelta
+
+    ## Same non-binding-vs-efficacy safeguard RTSA's own analysis branch
+    ## applies at its last look (boundaries.R: if the futility bound at
+    ## the final look exceeds the efficacy bound there, clip it down to
+    ## the efficacy bound).
+    nnn <- length(za_ext)
+    if (za_ext[nnn] > alpha_ubound_ext[nnn]) za_ext[nnn] <- alpha_ubound_ext[nnn]
+  }
+
+  ## STEP 3: return only the boundaries at the ACTUALLY OBSERVED looks
+  ## (t), dropping the synthetic design endpoint whenever it was
+  ## appended rather than genuinely observed.
+  match_pre <- match(t, t_ext)
+  boundary <- za_ext[match_pre]
+
+  ## Over-powered observed looks (t > design_R, e.g. a single very
+  ## informative early study that alone exceeds the design's planned
+  ## total information) were trimmed out of t_ext entirely above and so
+  ## have no match there; mirror .rtsa_beta_boundary()'s own convention
+  ## for this case (its `over_power`/t > 1 branch) by giving them the
+  ## same definitive final boundary as the design endpoint itself.
+  over_power_look <- t > design_R
+  if (any(over_power_look)) boundary[over_power_look] <- final_alpha_bound
+
+  ## RTSA's own boundaries() converts every look pinned exactly at the
+  ## +/-20 sentinel (i.e. the recursion never bothered to solve a real
+  ## boundary there because rm_bs suppression zeroed its target spend) to
+  ## NA before returning: `beta_ubound <- c(rep(NA, sum(abs(za)==20)),
+  ## za[abs(za)<20])`. This is what makes RTSA's own printed early-look
+  ## futility boundaries show as blank/NA rather than as some finite
+  ## value close to -20 -- it is not a display-layer nicety tsahr adds on
+  ## top; it is RTSA's own numeric convention, reproduced here.
+  zninf <- -20
+  boundary[abs(boundary - zninf) < 1e-8] <- NA_real_
+
+  ## Same defensive tsahr-side safeguard as the design-mode engine: a
+  ## non-binding futility boundary should never lie above the
+  ## corresponding efficacy boundary.
+  boundary <- pmin(boundary, c_vec_alpha)
+
+  ## Same "fully spent" convention .rtsa_beta_boundary() uses for its own
+  ## t >= 1 over-powered entries, here relative to design_R instead of 1.
+  beta_spent <- ifelse(over_power_look, beta, beta_cum_ext[match_pre])
+  beta_spent_delta <- ifelse(
+    over_power_look, beta - utils::tail(beta_cum_ext, 2L)[1L],
+    beta_delta_ext[match_pre]
+  )
+
+  list(
+    boundary = boundary,
+    delta = delta,
+    design_R = design_R,
+    over_power = any(over_power_look),
+    t_ext = t_ext,
+    alpha_ubound_ext = alpha_ubound_ext,
+    rm_bs = rm_bs,
+    beta_spent = beta_spent,
+    beta_spent_delta = beta_spent_delta
+  )
+}
+
+## Backward-compatible helper: returns only the boundary vector.
+.obf_beta_boundary_analysis <- function(t, alpha, beta, c_vec_alpha,
+                                         design_R = NULL) {
+  .rtsa_beta_boundary_analysis(
+    t = t, alpha = alpha, beta = beta, c_vec_alpha = c_vec_alpha,
+    design_R = design_R
+  )$boundary
+}
+
+## -------------------------------------------------------------------------
+## Pre-0.2.7.11 boundary pipeline, kept ONLY as a fallback for tsa_hr() when
+## the RTSA-exact compiled engine (R/rtsa_engine.R) cannot produce a result.
+## Approximate: its alpha engine is an FFT convolution (not RTSA's Simpson
+## recursion). Until 0.2.7.19 its futility route also substituted
+## qnorm(1 - alpha/2) for the final efficacy wall; .rtsa_beta_boundary() now
+## recomputes that wall from the FFT alpha recursion (the analysis wrapper's
+## design_R endpoint still uses the constant). Measured on the reference
+## schedule 0.25/0.5/0.75/1 (0.2.7.21): warp root 1.132483 vs live RTSA
+## 1.133242 (error 7.6e-4; 3.6e-2 before the 0.2.7.19 fix), and the whole
+## residual comes from the FFT alpha input (final-look alpha error 1.1e-3).
+## See NEWS.md, 0.2.7.19 and 0.2.7.21.
+## -------------------------------------------------------------------------
+.tsahr_legacy_boundaries <- function(info_fracs, boundary_timing, alpha, beta) {
+  alpha_bounds_design <- .obf_alpha_boundary(boundary_timing, alpha = alpha)
+  beta_unique_fracs <- sort(unique(info_fracs))
+  beta_alpha_ref_observed <- alpha_bounds_design[
+    match(pmin(beta_unique_fracs, 1), boundary_timing)
+  ]
+  beta_engine <- .rtsa_beta_boundary_analysis(
+    beta_unique_fracs, alpha = alpha, beta = beta,
+    c_vec_alpha = beta_alpha_ref_observed
+  )
+  beta_pre_daris <- beta_engine$boundary[
+    match(boundary_timing[boundary_timing < 1], beta_unique_fracs)
+  ]
+  list(alpha_bounds_design = alpha_bounds_design,
+       beta_pre_daris = beta_pre_daris,
+       beta_engine = beta_engine)
 }

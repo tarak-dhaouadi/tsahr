@@ -1,3 +1,8 @@
+## *** LEGACY-ENGINE TESTS ***  These check the spending FORMULA and the OLD
+## FFT alpha engine (.obf_alpha_boundary(), now only tsa_hr()'s fallback). The
+## current engine's alpha recursion is checked in test-rtsa-engine-parity.R
+## (RTSA's own alpha reference 4.877 3.357 2.680 2.290 2.031 to 1e-3).
+
 ## Regression test for the alpha-spending formula correction: verifies
 ## the two-sided (side = 2) O'Brien-Fleming-type spending function
 ## against a concrete, exact, approximation-free comparison point.

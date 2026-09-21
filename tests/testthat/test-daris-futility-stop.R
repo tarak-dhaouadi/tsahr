@@ -40,6 +40,9 @@ test_that("retrospective boundary timeline terminates at the observed DARIS info
   expect_true(any(res$boundary_timeline$synthetic))
   expect_equal(tail(res$boundary_timeline$info_fraction, 1), 1)
 
+  ## (0.2.7.11+: the reference is the compiled RTSA-derived alpha recursion,
+  ## .rtsa_alpha_cpp(); the mention of .obf_alpha_boundary() in the header
+  ## above is history.)
   ## Reference: call the ACTUAL boundary engine on the SAME
   ## information-fraction schedule the real code path uses for this
   ## dataset (every pre-DARIS look, plus the synthetic t=1 endpoint) --
@@ -49,7 +52,8 @@ test_that("retrospective boundary timeline terminates at the observed DARIS info
   ## multi-look recursive boundary).
   pre_daris_fracs <- res$cumulative$info_fraction[res$cumulative$info_fraction < 1]
   expected_timing <- sort(unique(c(pre_daris_fracs, 1)))
-  expected_bound <- tsahr:::.obf_alpha_boundary(expected_timing, alpha = 0.05)
+  expected_bound <- tsahr:::.rtsa_alpha_cpp(expected_timing, side = 2L,
+                                            alpha = 0.05)$alpha_ubound
   expect_equal(
     tail(res$boundary_timeline$TSA_boundary_upper, 1),
     tail(expected_bound, 1),
@@ -63,18 +67,10 @@ test_that("retrospective boundary timeline terminates at the observed DARIS info
   )
 })
 
-test_that("final futility boundary is the conventional critical value, not the final efficacy boundary", {
-  ## Regression test for a documentation error found by an external audit
-  ## and independently verified: R/tsa_hr.R and man/tsa_hr.Rd previously
-  ## claimed the final futility boundary "equals the same value as the
-  ## final efficacy boundary" under the RTSA convention. It does not --
-  ## the actual code computes
-  ##   beta_final <- min(qnorm(1 - alpha/2), tail(alpha_bounds_design, 1))
-  ## and since the sequentially-adjusted final EFFICACY boundary is
-  ## virtually always at or above the conventional qnorm(1-alpha/2)
-  ## value, min() almost always selects the conventional value instead --
-  ## meaning the final futility and efficacy boundaries are normally
-  ## DIFFERENT, not equal.
+test_that("final futility boundary equals the final efficacy boundary (RTSA design pass)", {
+  ## 0.2.7.12: reverses the 0.2.6.x-0.2.7.11 convention
+  ## min(qnorm(1 - alpha/2), final efficacy).  As in RTSA's design pass, the
+  ## futility and efficacy boundaries meet at t = 1.
   over_info <- data.frame(
     Study = paste0("S", 1:3),
     log_HR = rep(log(0.8), 3),
@@ -87,15 +83,10 @@ test_that("final futility boundary is the conventional critical value, not the f
 
   final_futility  <- tail(res$boundary_timeline$TSA_futility_upper, 1)
   final_efficacy  <- tail(res$boundary_timeline$TSA_boundary_upper, 1)
-  conventional_z  <- stats::qnorm(1 - 0.05 / 2)
 
-  ## The final futility boundary matches the conventional two-sided
-  ## critical value...
-  expect_equal(final_futility, conventional_z, tolerance = 1e-8)
-  ## ...which is NOT the same as the (sequentially-adjusted, generally
-  ## larger) final efficacy boundary for a multi-look design.
-  expect_false(isTRUE(all.equal(final_futility, final_efficacy)))
-  expect_gt(final_efficacy, final_futility)
+  expect_equal(final_futility, final_efficacy, tolerance = 1e-12)
+  expect_equal(tail(res$boundary_timeline$TSA_futility_lower, 1),
+               -final_efficacy, tolerance = 1e-12)
 })
 
 test_that("post-DARIS observed rows do not carry formal boundaries", {
