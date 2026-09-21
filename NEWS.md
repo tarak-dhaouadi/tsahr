@@ -1,47 +1,3 @@
-# tsahr 0.2.7.21
-
-## Measured accuracy of the 0.2.7.19 legacy fix; corrections to its documentation; regression test
-
-Documentation and test release for the LEGACY fallback engine. The default
-compiled paths are untouched, and no shipped code path changes.
-
-* **Measured, in R (maintainer's session), on the reference schedule
-  0.25/0.5/0.75/1 (alpha 0.05, beta 0.20).** The legacy FFT alpha engine
-  (`.obf_alpha_boundary()`, default `n_grid = 16000`) gives 4.332634 2.963388
-  2.358980 2.012955 against live RTSA 0.2.2's 4.332634 2.963131 2.359044
-  2.014090: errors 4e-7, 2.6e-4, -6.4e-5 and -1.14e-3, largest at the final
-  look (the value the futility root search targets). The legacy warp root is
-  1.132483 against RTSA's 1.133242 (error 7.6e-4), where before the 0.2.7.19
-  fix it was 1.0972 (error 3.6e-2) -- a ~47-fold reduction. Feeding the same
-  FFT alpha vector to an independent Simpson beta implementation gives root
-  1.132483339, i.e. exactly what the legacy R beta code reported: the legacy
-  beta engine is exact given its alpha input, and the whole residual error comes
-  from the FFT alpha. One schedule only -- not a general accuracy bound for the
-  fallback, which remains labelled approximate and "NOT comparable with RTSA".
-  This also answers the `n_grid = 16000` question left open in the
-  `.obf_alpha_boundary()` notes for this schedule (the 5-look snippet there has
-  still not been run).
-* **Two claims in the 0.2.7.19 documentation were wrong and are corrected**
-  (here, in the 0.2.7.19 entry, and in the code comments): (1) `.obf_alpha_boundary()`
-  was called "the same validated side = 2 recursion"; it is the FFT
-  approximation of RTSA's Simpson recursion (error above), not a validated
-  reproduction. (2) The equality "final boundary = qnorm(1 - alpha/2)" was said to
-  hold "only in a continuous-monitoring limit"; it holds only for a single look.
-  With more looks the final wall is larger and keeps growing (2.014 for 4 even
-  looks, 2.185 for 100), which is exactly why assuming the constant was a bug.
-* **Stale comments fixed:** the header above `.tsahr_legacy_boundaries()` (it
-  still said the futility route substitutes `qnorm(1 - alpha/2)`), and the
-  headers of the two legacy test files (they said the `qnorm(1 - alpha/2)` final
-  boundary asserted in them is the legacy engine's convention; since 0.2.7.19 it
-  survives only for single-look schedules and the analysis wrapper's `design_R`
-  endpoint).
-* **New test** (`test-rtsa-live-reference.R`): the legacy engine on the frozen
-  reference schedule stays within 3e-3 of live RTSA for the alpha bounds and
-  futility bounds and within 2e-3 for the warp root, and its final wall is no
-  longer `qnorm(1 - alpha/2)`. The tolerances are set from the measurements above
-  and separate the fixed engine (errors <= 1.14e-3) from the unfixed one (root
-  3.6e-2, futility bounds 3.4e-2 to 5.4e-2 off).
-
 # tsahr 0.2.7.20
 
 ## Finishes the 0.2.7.19 test fixes that R CMD check caught as incomplete
@@ -114,7 +70,8 @@ compiled `boundary_route = "design"`/`"analysis"` paths are NOT affected).
   constant for the final entry of the alpha wall it root-finds the
   information-scale factor (`warp_root`) against. That assumption is wrong
   for RTSA's actual discretised O'Brien-Fleming-type spending recursion --
-  the equality holds only for a SINGLE look (no earlier spending); with more looks the final wall is larger and grows with the number of looks (2.014 for 4 even looks, 2.185 for 100) -- it depends on the schedule, not on a continuous-monitoring limit. [Corrected in 0.2.7.21; this entry originally attributed the equality to a continuous-monitoring limit.] A live RTSA reconstruction
+  the equality only holds in a continuous-monitoring limit, not for a
+  finite, schedule-dependent set of looks. A live RTSA reconstruction
   confirmed this concretely: for one real schedule, RTSA's own final alpha
   boundary was `2.014090377368289`, not `qnorm(1-alpha/2) =
   1.959963984540054` -- a difference large enough to materially shift the
@@ -126,7 +83,8 @@ compiled `boundary_route = "design"`/`"analysis"` paths are NOT affected).
   final futility boundary.
 * **The fix.** `.rtsa_beta_boundary()` no longer approximates the t = 1
   efficacy boundary at all. It recomputes the TRUE, schedule-dependent
-  value via `.obf_alpha_boundary()` -- the same side = 2 FFT recursion used everywhere else in this legacy engine (an APPROXIMATION of RTSA's Simpson recursion, not a validated reproduction of it; see 0.2.7.21) -- run on `timing_beta`
+  value via `.obf_alpha_boundary()` -- the same validated side = 2
+  recursion used everywhere else in this package -- run on `timing_beta`
   itself (the observed pre-1 looks plus the definitive t = 1 point),
   rather than reusing whichever `c_vec_alpha` the caller happened to
   already have. This is correct and self-contained whether or not the

@@ -1,17 +1,11 @@
 ## *** LEGACY-ENGINE TESTS (R-only, pre-0.2.7.11) ***
 ## Everything in this file (apart from the final 0.2.7.11 test, which
-## checks the current engine's beta_engine object) exercises the OLD pure-R
-## boundary functions
+## checks the current engine's beta_engine object) exercises the OLD pure-R boundary functions
 ## (.obf_alpha_boundary(), .obf_beta_boundary(), .rtsa_beta_boundary(),
 ## .rtsa_beta_boundary_analysis(), ...), which tsa_hr() now uses only as its
-## opt-in fallback (legacy_fallback = TRUE, flagged in the result). Since
-## 0.2.7.19 .rtsa_beta_boundary() recomputes its final efficacy wall from the
-## FFT alpha recursion instead of assuming qnorm(1 - alpha / 2); that
-## constant survives in these tests only for single-look schedules (where it
-## IS the right value) and for the analysis wrapper's design_R endpoint
-## approximation. This engine is approximate either way (FFT alpha; measured
-## root error 7.6e-4 on the reference schedule, see NEWS 0.2.7.21). It is NOT
-## the current engine's convention: the compiled RTSA-derived
+## opt-in fallback (legacy_fallback = TRUE, flagged in the result). The
+## `qnorm(1 - alpha / 2)` final boundary asserted below is THAT engine's
+## convention. It is NOT the current engine's: the compiled RTSA-derived
 ## design route sets the final futility bound equal to the final efficacy
 ## bound (the alpha recursion's value at t = 1, e.g. ~2.13, not 1.96).
 ## Tests of the current engine are in test-rtsa-engine-parity.R,
