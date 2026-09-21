@@ -1,4 +1,8 @@
 """
+Copyright (C) the RTSA authors (Soerensen, Olsen, Lange, Gluud) for the algorithms and
+code this file is derived from (RTSA 0.2.2, GPL >= 2); copyright (C) Tarak Dhaouadi for
+the adaptation. Free software under GPL (>= 2): see ../DESCRIPTION and ../inst/COPYRIGHTS.
+
 Faithful Python port of the numerical engine of RTSA 0.2.2
 (R/RTSA_helperfunctions.R, R/boundaries.R, src/first.cpp -- init_int,
 recur_int, prob only; the other first.cpp exports are never called from R).

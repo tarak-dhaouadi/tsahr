@@ -27,9 +27,10 @@ what this package specifically contributes:
   `inst/REVERSE_ENGINEERING_RTSA.md`. The earlier R-only engine
   (`R/obf_boundaries.R`; validated against the published exact
   O'Brien-Fleming constant plus Monte Carlo type-I error control) is kept
-  only as an opt-in fallback (`legacy_fallback`), clearly flagged in the
-  result whenever it is used; use `legacy_fallback = FALSE` for
-  confirmatory or RTSA-parity work,
+  as a fallback that is ON by default (`legacy_fallback = TRUE`) and only
+  runs if the compiled engine fails, clearly flagged in the result whenever
+  it is used; set `legacy_fallback = FALSE` for confirmatory or RTSA-parity
+  work,
 - applying this monitoring framework to a **cumulative random-effects**
   meta-analysis Z-curve -- see the Caveats section below, this is an
   approximation shared with the official Copenhagen Trial Unit TSA
@@ -145,6 +146,25 @@ Wetterslev J, Thorlund K, Brok J, Gluud C. "Estimating required
 information size by quantifying diversity in random-effects model
 meta-analyses." *BMC Med Res Methodol.* 2009;9:86.
 
-## License
+## Attribution and license
 
-MIT
+tsahr contains code ported from the R package
+[RTSA](https://cran.r-project.org/package=RTSA) (Anne Lyngholm Soerensen,
+Markus Harboe Olsen, Theis Lange and Christian Gluud), licensed GPL (>= 2):
+the C++ boundary engine (`src/rtsa_core.h`, `src/rtsa_engine.cpp`), its R
+orchestration (`R/rtsa_engine.R`) and the earlier R-only reconstruction of it
+(`R/obf_boundaries.R`). RTSA is the R version of Trial Sequential Analysis
+(TSA), originally developed as a stand-alone Java program by the Copenhagen
+Trial Unit; the RTSA manual is heavily inspired by the user manual for TSA by
+Kristian Thorlund, Janus Engstrøm, Jørn Wetterslev, Jesper Brok, Georgina
+Imberger and Christian Gluud. The original TSA software is available at
+<https://ctu.dk/tsa/>:
+
+> Copenhagen Trial Unit, Centre for Clinical Intervention Research,
+> Department 3344, Rigshospitalet, DK-2100 Copenhagen Ø, Denmark.
+> Tel. +45 3545 7171, Fax +45 3545 7101, E-mail: tsa@ctu.dk
+
+Because of that, **tsahr is licensed GPL (>= 2)** (as of 0.2.7.22; earlier
+releases were labelled MIT). See `inst/COPYRIGHTS` for the file-by-file
+provenance. If you use tsahr for boundary computations please also cite RTSA
+and the TSA software.

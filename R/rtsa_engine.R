@@ -1,3 +1,10 @@
+## Copyright (C) the RTSA authors (Anne Lyngholm Soerensen, Markus Harboe Olsen,
+## Theis Lange, Christian Gluud) for the algorithms and code this file is derived
+## from (RTSA 0.2.2, GPL (>= 2)); copyright (C) Tarak Dhaouadi for the
+## adaptation. This file is free software; you can redistribute it and/or modify
+## it under the terms of the GNU General Public License as published by the Free
+## Software Foundation; either version 2 of the License, or (at your option) any
+## later version. See DESCRIPTION and inst/COPYRIGHTS.
 ## -------------------------------------------------------------------------
 ## RTSA-derived boundary engine (added in 0.2.7.11)
 ##
@@ -414,3 +421,14 @@
   }
   invisible(t)
 }
+
+## Formatters for tsa_hr()'s summary_table `Value` column (0.2.7.22). Element by
+## element on purpose: format() on a vector applies ONE common number of
+## decimals to all of it (0.509 -> "0.509" but 30478 -> "30478.000").
+.tsahr_format_numeric <- function(x) {
+  x <- as.numeric(x)
+  vapply(x, function(v) {
+    if (is.na(v)) NA_character_ else format(v, scientific = FALSE, trim = TRUE, digits = 15)
+  }, character(1))
+}
+.tsahr_format_logical <- function(x) as.character(as.logical(x))

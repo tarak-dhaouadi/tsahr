@@ -35,6 +35,14 @@ test_that("real 37-look (40-study, target HR 0.94) schedule: design route calibr
   expect_equal(des$beta_ubound[c(15, 36, 37)],
                c(0.2044558, 1.938122, 2.049299), tolerance = 1e-5)
   expect_equal(des$beta_ubound[38], des$alpha_ubound[38], tolerance = 1e-6)
+  ## RTSA-parity of the alpha tolerance (0.2.7.22): RTSA's alpha search uses an
+  ## ABSOLUTE tolerance of 1e-9, so a look whose cumulative spend is below that
+  ## is not solved but reported as the placeholder 20 (looks 1-5 here), and the
+  ## first solved look after them (look 6, 5.4296) is a little off the value a
+  ## tighter tolerance would give (5.4227, error 7e-3). tsahr deliberately keeps
+  ## RTSA's tolerance and placeholder; this pins that.
+  expect_equal(des$alpha_ubound[1:5], rep(20, 5))
+  expect_lt(des$alpha_ubound[6], 20)
 })
 
 test_that("many-look and awkward schedules calibrate (design route)", {
@@ -194,3 +202,55 @@ test_that("look-spacing diagnostic: warns below 0.25% of the required informatio
   )
   expect_true(any(grepl("less than 0.25%", msgs, fixed = TRUE)))
 })
+
+test_that("0.2.7.22: knife-edge -- calibration does not depend on the last bit of beta (power 0.80 etc.)", {
+  ## Low-information schedule: every interim look is suppressed (rm_bs = 30) and
+  ## the final look carries the whole beta spend. RTSA's `spend == beta -> za = 0`
+  ## shortcut used to fire for beta = 1 - 0.8 = 0.19999999999999996 (RTSA itself is
+  ## called with a literal 0.2) and made the root search fail. Roots are ~1.00003
+  ## (final wall ~1.960039: with only the last look effective, ~ the fixed-sample
+  ## value).
+  sched <- seq(0.009, 0.26, length.out = 30)
+  roots <- c(`0.80` = 1.0000404, `0.85` = 1.0000382, `0.90` = 1.0000358,
+             `0.95` = 1.0000328, `0.99` = 1.0000284)
+  for (pw in c(0.80, 0.85, 0.90, 0.95, 0.99)) {
+    exp_root <- roots[[sprintf("%.2f", pw)]]
+    for (b in c(1 - pw, round(1 - pw, 12), (1 - pw) + 1e-12, (1 - pw) - 1e-12)) {
+      info <- sprintf("power %.2f, beta = %.17g", pw, b)
+      des <- tsahr:::.rtsa_design_bounds(sched, alpha = 0.05, beta = b)
+      expect_identical(des$rm_bs, 30L, info = info)
+      expect_true(all(is.na(des$beta_ubound[1:30])), info = info)
+      expect_equal(des$root, exp_root, tolerance = 2e-6, info = info)
+      expect_equal(des$alpha_ubound[31], 1.960039, tolerance = 1e-6, info = info)
+      expect_equal(des$beta_ubound[31], des$alpha_ubound[31], tolerance = 1e-6, info = info)
+    }
+  }
+})
+
+test_that("0.2.7.22: an 'evidence still insufficient' tsa_hr() run uses the RTSA-derived engine at any power", {
+  ## 30 identical small studies, ~26% of the required information at target
+  ## HR 0.90 / power 0.80. Before 0.2.7.22 this fell back to the legacy engine
+  ## (warning + banner + slow) at the default power.
+  low <- data.frame(
+    Study = paste0("S", 1:30),
+    log_HR = rep(log(0.9), 30),
+    Std_Error = rep(0.4, 30),
+    Events_Treatment = rep(40, 30), N_treatment = rep(400, 30),
+    Events_controls  = rep(45, 30), N_controls  = rep(400, 30)
+  )
+  for (pw in c(0.80, 0.90, 0.95)) {
+    msgs <- character()
+    res <- withCallingHandlers(
+      suppressMessages(tsa_hr(low, target_HR = 0.90, power = pw, verbose = FALSE)),
+      warning = function(w) {
+        msgs <<- c(msgs, conditionMessage(w))
+        invokeRestart("muffleWarning")
+      })
+    info <- sprintf("power %.2f", pw)
+    expect_identical(res$beta_engine$engine, "rtsa_design_cpp", info = info)
+    expect_false(res$settings$fallback_used, info = info)
+    expect_false(any(grepl("LEGACY", msgs, fixed = TRUE)), info = info)
+    expect_false(isTRUE(res$results$final_reached), info = info)
+  }
+})
+

@@ -1,3 +1,10 @@
+## Copyright (C) the RTSA authors (Anne Lyngholm Soerensen, Markus Harboe Olsen,
+## Theis Lange, Christian Gluud) for the algorithms and code this file is derived
+## from (RTSA 0.2.2, GPL (>= 2)); copyright (C) Tarak Dhaouadi for the
+## adaptation. This file is free software; you can redistribute it and/or modify
+## it under the terms of the GNU General Public License as published by the Free
+## Software Foundation; either version 2 of the License, or (at your option) any
+## later version. See DESCRIPTION and inst/COPYRIGHTS.
 ## Internal O'Brien-Fleming-type alpha-spending and non-binding
 ## beta-spending group sequential boundary calculator.
 ##
@@ -124,6 +131,14 @@
 ##     correct nominal timing; this is expected to pass at both
 ##     n_grid=2000 and n_grid=16000 based on the Python check above, but
 ##     has not been confirmed against the actual R implementation.
+##     ** Measured in R (0.2.7.21, at the default n_grid = 16000): **
+##       tsahr:::.obf_alpha_boundary(c(0.25, 0.5, 0.75, 1), 0.05)
+##         = 4.332634 2.963388 2.358980 2.012955
+##       live RTSA 0.2.2 (inst/extdata/rtsa_0.2.2_reference.R)
+##         = 4.332634 2.963131 2.359044 2.014090
+##       error (FFT - RTSA): 4e-7, 2.6e-4, -6.4e-5, -1.14e-3 -- largest at the
+##       final look. One schedule only: not a general accuracy bound. The
+##       5-look snippet above (t = 0.2 ... 1) has still not been run.
 ##   - The recursive integration engine itself (the FFT-based recursion
 ##     below) was independently reproduced line-by-line in Python (scipy)
 ##     and checked two ways. These checks validate the recursion
@@ -937,9 +952,12 @@
   ## properly normalised two-sided alpha-spending function, the efficacy
   ## boundary at t = 1 is exactly qnorm(1-alpha/2)" and substituted that
   ## constant here. That assumption is WRONG for RTSA's actual discretised
-  ## O'Brien-Fleming-type spending recursion: the equality only holds in a
-  ## continuous-monitoring limit, not for a finite, schedule-dependent set
-  ## of looks. Confirmed against a live RTSA reconstruction: for one real
+  ## O'Brien-Fleming-type spending recursion: the equality holds only for a
+  ## SINGLE look (no earlier spending); with more looks the final wall is
+  ## LARGER, and it grows with the number of looks (e.g. 2.014 for 4 even
+  ## looks, 2.185 for 100 even looks at alpha = 0.05) -- it depends on the
+  ## schedule, not on a continuous-monitoring limit. Confirmed against a
+  ## live RTSA reconstruction: for one real
   ## schedule, RTSA's own final alpha boundary was 2.014090377368289, not
   ## qnorm(1-alpha/2) = 1.959963984540054 -- a difference large enough to
   ## materially shift the warp_root this function solves for (1.133242 vs.
@@ -947,8 +965,11 @@
   ## final futility boundary itself (2.014090 vs. 1.959964).
   ##
   ## Fixed by recomputing the TRUE, schedule-dependent alpha boundary via
-  ## .obf_alpha_boundary() -- the same validated side = 2 recursion used
-  ## everywhere else in this package -- run on timing_beta itself (the
+  ## .obf_alpha_boundary() -- the same side = 2 FFT recursion used
+  ## everywhere else in this legacy engine, which is an APPROXIMATION of
+  ## RTSA's own Simpson recursion, not a validated reproduction of it
+  ## (final-look error 1.1e-3 on the 4-look schedule 0.25/0.5/0.75/1,
+  ## measured 0.2.7.21) -- run on timing_beta itself (the
   ## observed pre-1 looks plus the definitive t = 1 point), rather than
   ## reusing whichever `c_vec_alpha` the caller happened to already have.
   ## This is correct and self-contained whether or not the caller's `t`
@@ -1359,8 +1380,14 @@
 ## Pre-0.2.7.11 boundary pipeline, kept ONLY as a fallback for tsa_hr() when
 ## the RTSA-exact compiled engine (R/rtsa_engine.R) cannot produce a result.
 ## Approximate: its alpha engine is an FFT convolution (not RTSA's Simpson
-## recursion), and its futility route substitutes qnorm(1 - alpha/2) for the
-## final efficacy wall -- see NEWS.md, 0.2.7.11.
+## recursion). Until 0.2.7.19 its futility route also substituted
+## qnorm(1 - alpha/2) for the final efficacy wall; .rtsa_beta_boundary() now
+## recomputes that wall from the FFT alpha recursion (the analysis wrapper's
+## design_R endpoint still uses the constant). Measured on the reference
+## schedule 0.25/0.5/0.75/1 (0.2.7.21): warp root 1.132483 vs live RTSA
+## 1.133242 (error 7.6e-4; 3.6e-2 before the 0.2.7.19 fix), and the whole
+## residual comes from the FFT alpha input (final-look alpha error 1.1e-3).
+## See NEWS.md, 0.2.7.19 and 0.2.7.21.
 ## -------------------------------------------------------------------------
 .tsahr_legacy_boundaries <- function(info_fracs, boundary_timing, alpha, beta) {
   alpha_bounds_design <- .obf_alpha_boundary(boundary_timing, alpha = alpha)

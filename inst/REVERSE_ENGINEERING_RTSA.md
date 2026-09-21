@@ -58,6 +58,11 @@ ordinary result)
   is an error. (0.2.7.13/14 threw here instead: the bracketing root search then
   failed for many schedules, including a real 37-look schedule, and `tsa_hr()`
   fell back to the legacy engine.)
+* **`spend == beta` shortcut not ported (0.2.7.22).** RTSA sets `za = 0` when a
+  look's spend equals `beta` bit for bit. With all interim looks suppressed that
+  made the design calibration's gap constant ("no root bracket") for
+  `beta = 1 - power` at power 0.80 / 0.95 (RTSA's literal `beta = 0.2` does not
+  trigger it). Dropped at every look; unreachable in the frozen live reference.
 * `z_n_w()`: a degenerate grid (zero width) is counted as `grid_collapses`; a
   REVERSED interval (lower wall above the upper wall) is counted separately as
   `grid_reversed` and warned about loudly. Neither throws, because the root

@@ -177,3 +177,20 @@ if __name__ == "__main__":
     assert max(e_root, e_a, e_b, e_aa, e_ab) < 1e-12
     print("live RTSA 0.2.2 reference reproduced")
 
+    # 11. 0.2.7.22: the `spend == beta` knife-edge. tsahr computes beta = 1 - power
+    #     (0.19999999999999996 for power 0.8); on a low-information schedule every
+    #     interim look is suppressed, the final look carries all the beta spend, and
+    #     RTSA's exact-float shortcut `spend == beta -> za = 0` fired for some betas
+    #     only, making the calibration gap constant ("no root bracket"). The
+    #     shortcut is no longer ported: every power now calibrates identically.
+    sched = np.linspace(0.009, 0.26, 30)
+    roots = {}
+    for pw in (0.80, 0.85, 0.90, 0.95, 0.99):
+        for b in (1 - pw, round(1 - pw, 12), (1 - pw) + 1e-12, (1 - pw) - 1e-12):
+            r, rm, za, ub = design_pass_cpp(sched, beta=b)
+            assert rm == 30, "all 30 interim looks must be suppressed"
+            roots.setdefault(pw, []).append(r)
+        assert max(roots[pw]) - min(roots[pw]) < 1e-6, "root must not depend on the last bit of beta"
+    print("knife-edge: roots by power", {k: round(v[0], 7) for k, v in roots.items()})
+    print("knife-edge fix OK")
+

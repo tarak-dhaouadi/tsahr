@@ -73,3 +73,26 @@ test_that("a length mismatch other than RTSA's appended-look shape is still reje
                            design_R = 1.13, warn = FALSE),
     "equal length")
 })
+
+test_that("LEGACY fallback (0.2.7.19 fix) is close to live RTSA and no longer sits on the qnorm(1 - alpha/2) wall", {
+  ## The legacy R-only engine uses the approximate FFT alpha recursion, so it
+  ## cannot reproduce RTSA to more than ~1e-3; what this test protects is the
+  ## 0.2.7.19 fix. Measured in R (0.2.7.21) on this schedule: FFT alpha
+  ## 4.332634 2.963388 2.358980 2.012955 (final-look error -1.14e-3); legacy
+  ## warp root 1.132483 vs live RTSA 1.133242 (error 7.6e-4). Before the fix the
+  ## root was 1.0972 (error 3.6e-2) and the final wall 1.95996, so the
+  ## tolerances below (2e-3 / 3e-3) separate fixed from unfixed.
+  t4 <- ref$design$timing
+  a_fft <- tsahr:::.obf_alpha_boundary(t4, ref$alpha)
+  expect_lt(max(abs(a_fft - ref$design$alpha_ubound)), 3e-3)
+
+  leg <- tsahr:::.rtsa_beta_boundary(t4, ref$alpha, ref$beta, a_fft)
+  expect_lt(abs(leg$warp_root - ref$design$root), 2e-3)
+
+  ok <- !is.na(ref$design$beta_ubound)
+  expect_false(anyNA(leg$boundary[ok]))
+  expect_lt(max(abs(leg$boundary[ok] - ref$design$beta_ubound[ok])), 3e-3)
+  ## the final wall is the recomputed one (~2.013), not qnorm(1 - alpha/2) (1.960)
+  expect_gt(utils::tail(leg$boundary, 1) - stats::qnorm(1 - ref$alpha / 2), 0.03)
+})
+

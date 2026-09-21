@@ -267,6 +267,27 @@
 #' reported for the converged passes, not for the transient candidate
 #' information scales tried inside the root searches.
 #'
+#' \strong{Placeholder boundaries: RTSA's tolerance, kept (0.2.7.22).} At looks
+#' where the cumulative alpha spend is below RTSA's absolute search tolerance of
+#' 1e-9 (very early looks, small information fractions) RTSA does not solve for a
+#' boundary but reports the placeholder value 20, and tsahr reproduces this
+#' deliberately (\code{TSA_boundary_upper == 20}). It is not a computed boundary:
+#' the true boundary there is finite (about 6.7 and 6.2 at information fractions
+#' 0.108 and 0.125 in a 37-look example), and a Z-curve above the placeholder is
+#' not counted as crossing. The same tolerance also makes the first boundary that
+#' IS solved after such looks slightly inaccurate (an error of about 7e-3 in that
+#' example, shrinking at later looks). Both effects are RTSA's own; tsahr keeps
+#' RTSA's tolerance so that its bounds match RTSA's, and the placeholder stretches
+#' the vertical axis of \code{plot()}.
+#'
+#' \strong{Final-look-only beta spend (0.2.7.22).} When every interim look is
+#' suppressed (small information fractions) the final look carries the whole beta
+#' spend. RTSA has an exact-float shortcut for that case that fires or not
+#' depending on the last bit of \code{beta}; tsahr computes \code{beta = 1 - power}
+#' and used to hit it at power 0.80, losing the compiled engine to the legacy
+#' fallback. The shortcut is no longer ported, so the result no longer depends on
+#' the last bit of \code{beta}.
+#'
 #' @return An object of class \code{"tsa_hr"}: a list containing the fitted
 #'   random-effects and fixed-effect \code{metafor::rma} model objects,
 #'   heterogeneity statistics (including \code{D2}, capped at 99.9% for
@@ -302,7 +323,9 @@
 #'   \code{fallback_route}, \code{fallback_reason}, the resolved
 #'   \code{route_endpoint} (\code{1} for \code{"design"}, \code{design_R}
 #'   for \code{"analysis"}), \code{route_endpoint_info} and
-#'   \code{used_legacy_engine}, and a summary data frame. Use
+#'   \code{used_legacy_engine}, and a summary data frame (character
+#'   \code{Parameter} and \code{Value} columns; \code{Value} is character so
+#'   logical rows print as TRUE/FALSE/NA rather than 1/0/NA). Use
 #'   \code{plot()}, \code{summary()}, or \code{print()} on the result.
 #'
 #' @references
@@ -705,7 +728,7 @@ tsa_hr <- function(data,
   if (allocation_source == "data") {
     allocation_p_used <- sum(data$N_treatment) / sum(data$N_treatment + data$N_controls)
     allocation_note <- sprintf(
-      "computed from pooled data: %d/%d treatment patients (psi = %.4f, ~%.0f:%.0f ratio)",
+      "computed from pooled data: %.0f/%.0f treatment patients (psi = %.4f, ~%.0f:%.0f ratio)",
       sum(data$N_treatment), sum(data$total_n), allocation_p_used,
       round(allocation_p_used * 100), round((1 - allocation_p_used) * 100))
   } else {
@@ -755,12 +778,12 @@ tsa_hr <- function(data,
                 alpha_two_sided, power * 100, allocation_p_used,
                 round(allocation_p_used * 100), round((1 - allocation_p_used) * 100)))
     cat(sprintf("Required statistical information (allocation-free): %.4f\n", info_required))
-    cat(sprintf("Required number of events (RIS, no heterogeneity adj., under psi=%.3f): %d\n",
+    cat(sprintf("Required number of events (RIS, no heterogeneity adj., under psi=%.3f): %.0f\n",
                 allocation_p_used, ceiling(RIS_events)))
     cat(sprintf("Diversity-Adjusted Required Information (DARIS, information units): %.4f\n", DARIS_info))
-    cat(sprintf("DARIS translated to an equivalent number of events (under pooled psi): %d\n\n",
+    cat(sprintf("DARIS translated to an equivalent number of events (under pooled psi): %.0f\n\n",
                 ceiling(DARIS_events)))
-    cat(sprintf("Total events accrued across included studies: %d (%.1f%% of DARIS)\n\n",
+    cat(sprintf("Total events accrued across included studies: %.0f (%.1f%% of DARIS)\n\n",
                 sum(data$total_events), 100 * sum(data$total_events) / DARIS_events))
   }
 
@@ -1283,16 +1306,16 @@ tsa_hr <- function(data,
       cat(sprintf("Analysis-route endpoint (%.3f x DARIS) reached               : %s\n",
                   route_endpoint, ifelse(final_reached, "YES", "NO")))
     }
-    cat(sprintf("  Theoretical DARIS event-equivalent (Schoenfeld-based)        : %d\n",
+    cat(sprintf("  Theoretical DARIS event-equivalent (Schoenfeld-based)        : %.0f\n",
                 ceiling(DARIS_events)))
     if (analysis_endpoint) {
       cat(sprintf(paste0("  Theoretical event-equivalent of the analysis-route endpoint\n",
-                          "  (%.3f x DARIS)                                            : %d\n"),
+                          "  (%.3f x DARIS)                                            : %.0f\n"),
                   route_endpoint, ceiling(DARIS_events * route_endpoint)))
     }
     if (daris_reached) {
       cat(sprintf(paste0("  Estimated cumulative events at which DARIS information\n",
-                          "  was reached (interpolated, not an observed look)          : %d\n"),
+                          "  was reached (interpolated, not an observed look)          : %.0f\n"),
                   ceiling(DARIS_info_threshold_events)))
       if (abs(DARIS_info_threshold_events - DARIS_events) > 0.01 * DARIS_events) {
         cat(sprintf(paste0("  (These may differ because the observed study-level information\n",
@@ -1359,8 +1382,14 @@ tsa_hr <- function(data,
                "Entered non-binding futility region (at any formal look; not a formal stopping decision)",
                "Definitive look crossed efficacy boundary (NA if the endpoint was not reached)",
                "Definitive look did not cross efficacy (final_non_efficacy; NA if the endpoint was not reached)")
-  sum_val <- c(sum_val, crossed_conventional, crossed_tsa, entered_futility_region,
-               final_crossed_efficacy, final_non_efficacy)
+  ## ** 0.2.7.22: ** `Value` is a CHARACTER column. Building it with c() of
+  ## numbers and logicals silently coerced everything to numeric, so the
+  ## TRUE/FALSE decision rows printed as 1/0. Numbers keep their rounding;
+  ## logicals print as TRUE/FALSE/NA; NA stays NA.
+  sum_val <- c(.tsahr_format_numeric(sum_val),
+               .tsahr_format_logical(c(crossed_conventional, crossed_tsa,
+                                       entered_futility_region,
+                                       final_crossed_efficacy, final_non_efficacy)))
   summary_df <- data.frame(Parameter = sum_par, Value = sum_val,
                            stringsAsFactors = FALSE)
 

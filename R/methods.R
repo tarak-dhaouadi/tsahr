@@ -6,11 +6,11 @@
 print.tsa_hr <- function(x, ...) {
   cat("Trial Sequential Analysis (Hazard Ratios)\n")
   cat("------------------------------------------\n")
-  cat(sprintf("Studies: %d | Events accrued: %d\n",
+  cat(sprintf("Studies: %d | Events accrued: %.0f\n",
               nrow(x$data), x$results$events_accrued))
   cat(sprintf("Pooled HR (random effects): %.3f\n", exp(x$res_re$b)))
   cat(sprintf("Anticipated HR (RIS calc): %.3f\n", x$parameters$HR_anticipated))
-  cat(sprintf("Theoretical DARIS event-equivalent: %d\n", ceiling(x$information_size$DARIS_events)))
+  cat(sprintf("Theoretical DARIS event-equivalent: %.0f\n", ceiling(x$information_size$DARIS_events)))
   analysis_route <- identical(x$settings$route_used, "analysis")
   daris_reached  <- if (is.null(x$results$daris_reached)) x$results$final_reached else x$results$daris_reached
   cat(sprintf("Crossed TSA boundary: %s | Entered futility region: %s | DARIS information reached: %s\n",

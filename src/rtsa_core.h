@@ -1,3 +1,10 @@
+// Copyright (C) the RTSA authors (Anne Lyngholm Soerensen, Markus Harboe Olsen,
+// Theis Lange, Christian Gluud) for the algorithms and code this file is derived
+// from (RTSA 0.2.2, GPL (>= 2)); copyright (C) Tarak Dhaouadi for the
+// adaptation. This file is free software; you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by the Free
+// Software Foundation; either version 2 of the License, or (at your option) any
+// later version. See DESCRIPTION and inst/COPYRIGHTS.
 // -----------------------------------------------------------------------------
 // rtsa_core.h -- C++ port of RTSA's recursive-integration boundary engine.
 //
@@ -68,7 +75,16 @@
 //     scale tried by the root searches, where an interior look can be
 //     transiently reversed at a bad candidate without the search (which only
 //     targets the final look) being unable to continue past it and converge.
-//   * Everything is bounds-checked; RTSA indexes past vector ends silently.
+//   * Array LENGTHS are validated on entry (inf_frac, alpha_bound and the beta
+//     timeline must agree, apart from RTSA's documented appended-look shape;
+//     rm_bs must not exceed the number of looks), and reachability/convergence
+//     failures are reported. The inner numerical loops still use unchecked
+//     operator[] on vectors whose sizes were established by those checks;
+//     RTSA's R code indexes past vector ends silently, which this port does
+//     not rely on.
+//   * ** 0.2.7.22: ** the exact-float shortcuts `spend == beta -> za = 0` that
+//     RTSA has at the first look and at later looks are NOT ported (see
+//     beta_boundary()).
 //
 // Compiled inside R (Rcpp) it calls R::dnorm/R::pnorm/R::qnorm -- the very
 // same Rmath routines stats::dnorm/pnorm/qnorm and RTSA's C++ use.  With
@@ -530,10 +546,23 @@ inline BetaOut beta_boundary(const vec& inf_frac, const vec& alpha_bound,
   vec za(nn, 0.0);
   vec zb = alpha_bound;
   if (zb_short) zb.push_back(NaN);   // appended design_R look: never read
+  // ** 0.2.7.22 -- deliberate departure from RTSA: no `spend == beta` shortcut.
+  // RTSA has `else if (as_incr[i] == beta) za[i] <- 0` at every look. When all
+  // interim looks are suppressed (rm_bs = nt - 1: the low-information,
+  // "evidence still insufficient" case) the final look carries the whole beta
+  // spend, and whether that spend equals `beta` bit for bit decides whether the
+  // shortcut fires. tsahr computes beta = 1 - power (0.19999999999999996 for
+  // power 0.8), which equals RTSA's own spend arithmetic in the last bit,
+  // whereas RTSA is normally called with a literal beta = 0.2 that does not. When
+  // it fires, za is 0 whatever the information scale, so the calibration gap
+  // zb[nn] - za[nn] the root search works on is constant and can never change
+  // sign ("no root bracket"), and a design that calibrates at power 0.8 + 1e-12
+  // fails at 0.8. za = 0 has no statistical meaning here; the searched value
+  // (qnorm at the first look, searchfunc() later) is the correct one, so the
+  // shortcut is dropped. It is unreachable in every case the frozen RTSA
+  // reference covers, so parity there is unchanged.
   if (out.as_incr[0] == 0.0) {
     za[0] = zninf;
-  } else if (out.as_incr[0] == beta) {
-    za[0] = 0.0;
   } else {
     za[0] = zquant(out.as_incr[0], sd_proc[0] * delta, 1.0, true);
   }
@@ -550,9 +579,7 @@ inline BetaOut beta_boundary(const vec& inf_frac, const vec& alpha_bound,
     }
     if (a < tol) {
       za[i - 1] = zninf;
-    } else if (a == beta) {
-      za[i - 1] = 0.0;
-    } else {
+    } else {           // 0.2.7.22: RTSA's `a == beta -> za = 0` shortcut dropped (see above)
       try {
         za[i - 1] = searchfunc(last, g.zj, i, a, sd_incr, sd_proc, za, zb, tol,
                                true, delta, diag);

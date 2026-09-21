@@ -151,7 +151,8 @@ formal stopping recommendation; the definitive-look fields
 \code{fallback_reason}, the resolved \code{route_endpoint} (\code{1} for
 \code{"design"}, \code{design_R} for \code{"analysis"}),
 \code{route_endpoint_info} and \code{used_legacy_engine}, and a summary data
-frame. Use \code{plot()}, \code{summary()}, or \code{print()} on the
+frame (character \code{Parameter} and \code{Value} columns; \code{Value} is
+character so logical rows print as TRUE/FALSE/NA rather than 1/0/NA). Use \code{plot()}, \code{summary()}, or \code{print()} on the
 result.
 }
 \description{
@@ -296,6 +297,27 @@ upper wall), a state RTSA's own code would have stopped on and which
 invalidates the boundaries from that look onward. Diagnostics are
 reported for the converged passes, not for the transient candidate
 information scales tried inside the root searches.
+
+\strong{Placeholder boundaries: RTSA's tolerance, kept (0.2.7.22).} At looks
+where the cumulative alpha spend is below RTSA's absolute search tolerance of
+1e-9 (very early looks, small information fractions) RTSA does not solve for a
+boundary but reports the placeholder value 20, and tsahr reproduces this
+deliberately (\code{TSA_boundary_upper == 20}). It is not a computed boundary:
+the true boundary there is finite (about 6.7 and 6.2 at information fractions
+0.108 and 0.125 in a 37-look example), and a Z-curve above the placeholder is
+not counted as crossing. The same tolerance also makes the first boundary that
+IS solved after such looks slightly inaccurate (an error of about 7e-3 in that
+example, shrinking at later looks). Both effects are RTSA's own; tsahr keeps
+RTSA's tolerance so that its bounds match RTSA's, and the placeholder stretches
+the vertical axis of \code{plot()}.
+
+\strong{Final-look-only beta spend (0.2.7.22).} When every interim look is
+suppressed (small information fractions) the final look carries the whole beta
+spend. RTSA has an exact-float shortcut for that case that fires or not
+depending on the last bit of \code{beta}; tsahr computes \code{beta = 1 - power}
+and used to hit it at power 0.80, losing the compiled engine to the legacy
+fallback. The shortcut is no longer ported, so the result no longer depends on
+the last bit of \code{beta}.
 }
 \examples{
 \donttest{
