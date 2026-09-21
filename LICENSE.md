@@ -1,22 +1,56 @@
-# MIT License
+# GNU General Public License
 
-Copyright (c) 2026 tsahr authors
+**Version 2, June 1991**
 
-Permission is hereby granted, free of charge, to any person obtaining a
-copy of this software and associated documentation files (the
-"Software"), to deal in the Software without restriction, including
-without limitation the rights to use, copy, modify, merge, publish,
-distribute, sublicense, and/or sell copies of the Software, and to
-permit persons to whom the Software is furnished to do so, subject to
-the following conditions:
+Copyright (C) 2026 tsahr authors.
 
-The above copyright notice and this permission notice shall be included
-in all copies or substantial portions of the Software.
+`tsahr` is distributed under the **GNU General Public License, version 2
+or later (GPL (\>= 2))**, reflecting the GPL-licensed RTSA-derived code
+included in the package.
 
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS
-OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
-MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
-IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
-CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT,
-TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE
-SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+## tsahr attribution and licensing notice
+
+`tsahr` contains code ported from the R package **RTSA** by Anne
+Lyngholm Soerensen, Markus Harboe Olsen, Theis Lange and Christian
+Gluud. The RTSA-derived components include:
+
+-   the C++ boundary engine: `src/rtsa_core.h`, `src/rtsa_engine.cpp`;
+-   its R orchestration: `R/rtsa_engine.R`;
+-   the earlier R-only reconstruction: `R/obf_boundaries.R`.
+
+RTSA is the R version of Trial Sequential Analysis (TSA), originally
+developed as a stand-alone Java program by the Copenhagen Trial Unit.
+The RTSA manual is heavily inspired by the user manual for TSA by
+Kristian Thorlund, Janus Engstrøm, Jørn Wetterslev, Jesper Brok,
+Georgina Imberger and Christian Gluud.
+
+See `inst/COPYRIGHTS` for file-by-file provenance and licensing
+information.
+
+If you use `tsahr` for boundary computations, please also cite RTSA and
+the original TSA software.
+
+The original TSA software is available from the Copenhagen Trial Unit:
+
+https://ctu.dk/tsa/
+
+## GNU General Public License
+
+This program is free software: you can redistribute it and/or modify it
+under the terms of the GNU General Public License as published by the
+Free Software Foundation, either version 2 of the License, or (at your
+option) any later version.
+
+This program is distributed in the hope that it will be useful, but
+**WITHOUT ANY WARRANTY**; without even the implied warranty of
+**MERCHANTABILITY** or **FITNESS FOR A PARTICULAR PURPOSE**. See the GNU
+General Public License for more details.
+
+You should have received a copy of the GNU General Public License along
+with this program. If not, see:
+
+https://www.gnu.org/licenses/old-licenses/gpl-2.0.html
+
+For the complete legal terms, consult the official GNU General Public
+License, version 2, or any later version permitted by the package's GPL
+(\>= 2) licensing.
