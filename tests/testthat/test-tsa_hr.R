@@ -1,5 +1,5 @@
-test_that("tsa_hr runs on the bundled example data and returns a valid object", {
-  path <- tsahr_example_data()
+test_that("tsa_hr runs on the frozen 10-study example data and returns a valid object", {
+  path <- legacy_example_data()
   expect_true(file.exists(path))
 
   res <- suppressMessages(tsa_hr(path, target_HR = 0.80, verbose = FALSE))
@@ -13,7 +13,7 @@ test_that("tsa_hr runs on the bundled example data and returns a valid object", 
 })
 
 test_that("unequal allocation inflates the required information size", {
-  path <- tsahr_example_data()
+  path <- legacy_example_data()
 
   res_11 <- suppressMessages(tsa_hr(path, target_HR = 0.80,
                                      allocation_source = "manual",
@@ -26,7 +26,7 @@ test_that("unequal allocation inflates the required information size", {
 })
 
 test_that("invalid inputs are rejected", {
-  path <- tsahr_example_data()
+  path <- legacy_example_data()
 
   expect_error(tsa_hr(path, target_HR = 1, verbose = FALSE), "cannot equal 1")
   expect_error(tsa_hr(path, target_HR = -0.5, verbose = FALSE), "must be > 0")
@@ -68,7 +68,7 @@ test_that("invalid inputs are rejected", {
 })
 
 test_that("method defaults to DL and accepts other metafor random-effects estimators", {
-  path <- tsahr_example_data()
+  path <- legacy_example_data()
 
   res_default <- suppressMessages(tsa_hr(path, target_HR = 0.80, verbose = FALSE))
   res_dl      <- suppressMessages(tsa_hr(path, target_HR = 0.80, method = "DL",
@@ -106,7 +106,7 @@ test_that("every advertised method value runs and returns a valid object", {
   ## check that all methods produce the same answer, only that each one:
   ## runs without error, returns the method it was asked for, returns a
   ## finite tau2, and produces a valid tsa_hr object.
-  path <- tsahr_example_data()
+  path <- legacy_example_data()
   supported_methods <- c("DL", "HE", "HS", "HSk", "SJ", "ML", "REML",
                           "EB", "PM", "PMM")
 
@@ -122,7 +122,7 @@ test_that("every advertised method value runs and returns a valid object", {
 })
 
 test_that("print, summary, and plot methods work without error", {
-  path <- tsahr_example_data()
+  path <- legacy_example_data()
   res <- suppressMessages(tsa_hr(path, target_HR = 0.80, verbose = FALSE))
 
   expect_output(print(res))
@@ -133,7 +133,7 @@ test_that("print, summary, and plot methods work without error", {
 })
 
 test_that("plot label size/position overrides work without error", {
-  path <- tsahr_example_data()
+  path <- legacy_example_data()
   res <- suppressMessages(tsa_hr(path, target_HR = 0.80, verbose = FALSE))
 
   p <- plot(res, daris_label_size = 5, events_label_size = 5,
@@ -299,7 +299,7 @@ test_that("D2/AF are safely capped under extreme heterogeneity", {
 })
 
 test_that("D2_was_capped is FALSE and D2_raw == D2 in the ordinary (uncapped) case", {
-  path <- tsahr_example_data()
+  path <- legacy_example_data()
   res <- suppressMessages(tsa_hr(path, target_HR = 0.80, verbose = FALSE))
   expect_false(res$heterogeneity$D2_was_capped)
   expect_equal(res$heterogeneity$D2_raw, res$heterogeneity$D2)
@@ -322,7 +322,7 @@ test_that("Study identifiers must be non-missing and non-blank", {
 })
 
 test_that("order_by warns on tied values", {
-  path <- tsahr_example_data()
+  path <- legacy_example_data()
   d <- as.data.frame(readxl::read_excel(path))
   d$Year <- rep(2010, nrow(d))  ## force every row to tie
 
@@ -338,7 +338,7 @@ test_that("order_by actually determines the cumulative order", {
   ## this, order_by could silently no-op and only the warning path would
   ## be covered. TSA is order-dependent, so this is a reproducibility
   ## guarantee, not a cosmetic one.
-  path <- tsahr_example_data()
+  path <- legacy_example_data()
   d <- as.data.frame(readxl::read_excel(path))
   d$Year <- seq_len(nrow(d)) + 1990L  ## strictly increasing, no ties
 
@@ -365,7 +365,7 @@ test_that("order_by accepts the original spaced column name", {
   ## load, so a user passing the header exactly as it reads in their
   ## spreadsheet would previously hit a "not found" error for a column
   ## that is visibly present. order_by is now normalised the same way.
-  path <- tsahr_example_data()
+  path <- legacy_example_data()
   d <- as.data.frame(readxl::read_excel(path))
   d$`Publication Year` <- seq_len(nrow(d)) + 1990L
 
@@ -385,7 +385,7 @@ test_that("column names that collide after underscore normalisation are rejected
   ## after which data$Std_Error silently resolves to whichever came
   ## first -- a wrong-column bug producing a plausible but incorrect
   ## analysis with no error. Must be refused, not guessed at.
-  path <- tsahr_example_data()
+  path <- legacy_example_data()
   d <- as.data.frame(readxl::read_excel(path))
   d$`Std Error` <- d$Std_Error * 2  ## collides with existing Std_Error
 
@@ -394,7 +394,7 @@ test_that("column names that collide after underscore normalisation are rejected
 })
 
 test_that("target_HR near the null value of 1 triggers a warning, not an error", {
-  path <- tsahr_example_data()
+  path <- legacy_example_data()
   expect_warning(
     res <- tsa_hr(path, target_HR = 0.95, verbose = FALSE),
     "very close to the null value of 1"
@@ -408,7 +408,7 @@ test_that("target_HR near the null value of 1 triggers a warning, not an error",
 })
 
 test_that("target_HR = NA triggers a circularity warning", {
-  path <- tsahr_example_data()
+  path <- legacy_example_data()
   expect_warning(tsa_hr(path, verbose = FALSE), "circular")
 })
 
@@ -437,13 +437,13 @@ test_that("invalid event/sample-size data are rejected", {
 })
 
 test_that("results object uses the renamed entered_futility_region field", {
-  path <- tsahr_example_data()
+  path <- legacy_example_data()
   res <- suppressWarnings(tsa_hr(path, target_HR = 0.80, verbose = FALSE))
   expect_true("entered_futility_region" %in% names(res$results))
 })
 
 test_that("plot color customization works without error", {
-  path <- tsahr_example_data()
+  path <- legacy_example_data()
   res <- suppressWarnings(tsa_hr(path, target_HR = 0.80, verbose = FALSE))
   p <- plot(res, alpha_col = "purple", beta_col = "orange",
             naive_col = "grey40", z_col = "steelblue")
@@ -451,7 +451,7 @@ test_that("plot color customization works without error", {
 })
 
 test_that("caption size/face are customizable and actually applied", {
-  path <- tsahr_example_data()
+  path <- legacy_example_data()
   res <- suppressWarnings(tsa_hr(path, target_HR = 0.80, verbose = FALSE))
 
   p_default <- plot(res)
@@ -531,7 +531,7 @@ test_that("DARIS info-threshold can remain unreached AFTER the theoretical event
 })
 
 test_that("scalar parameter validation rejects out-of-range alpha/power/target_HR", {
-  path <- tsahr_example_data()
+  path <- legacy_example_data()
   expect_error(tsa_hr(path, alpha_two_sided = 2, target_HR = 0.8, verbose = FALSE),
                "alpha_two_sided")
   expect_error(tsa_hr(path, power = 1.5, target_HR = 0.8, verbose = FALSE),
@@ -573,7 +573,7 @@ test_that("method aliases CO and VC are normalised to HE", {
   ## recorded and what gets passed to metafor) and NUMERICALLY (the
   ## alias must give bit-for-bit the same analysis as "HE" -- these are
   ## the same estimator, so any divergence is a bug).
-  path <- tsahr_example_data()
+  path <- legacy_example_data()
 
   res_he <- suppressMessages(suppressWarnings(
     tsa_hr(path, target_HR = 0.80, method = "HE", verbose = FALSE)
@@ -616,7 +616,7 @@ test_that("circularity_warning reflects circularity itself, not severity", {
   ## analysis that hadn't blown past 3x DARIS therefore reported no
   ## circularity at all, contradicting ?tsa_hr, which correctly states
   ## that any RIS from the observed pooled effect is circular.
-  path <- tsahr_example_data()
+  path <- legacy_example_data()
 
   ## target_HR = NA => circular by construction, regardless of how much
   ## information accrued.
@@ -644,7 +644,7 @@ test_that("circularity_warning reflects circularity itself, not severity", {
 test_that("summary() reports circularity whenever target_HR is unspecified", {
   ## Companion to the test above, at the user-visible layer: the note
   ## must appear for ANY circular analysis, not only severe ones.
-  path <- tsahr_example_data()
+  path <- legacy_example_data()
   res <- suppressMessages(suppressWarnings(
     tsa_hr(path, target_HR = NA, verbose = FALSE)
   ))
@@ -661,7 +661,7 @@ test_that("non-numeric input columns are diagnosed as a type problem", {
   ## 0.2.6.8: is.finite() on a character column returns all-FALSE rather
   ## than erroring, so a column read in as text previously surfaced as
   ## "found NA/NaN/Inf" -- a misleading diagnosis of a type problem.
-  path <- tsahr_example_data()
+  path <- legacy_example_data()
   d <- as.data.frame(readxl::read_excel(path))
   ## The example sheet stores several headers with spaces ("Events
   ## Treatment"), which tsa_hr() normalises on load. Do the same here so

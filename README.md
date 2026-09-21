@@ -54,7 +54,8 @@ install.packages(c("metafor", "readxl", "ggplot2"))
 ```r
 library(tsahr)
 
-# Try it on the bundled example dataset (10 studies)
+# Try it on a bundled example dataset: 20 studies by default;
+# tsahr_example_data("HR_meta_2") is the 40-study version
 path <- tsahr_example_data()
 
 res <- tsa_hr(
@@ -68,6 +69,12 @@ res <- tsa_hr(
 summary(res)   # full results table
 plot(res)      # the TSA chart
 ```
+
+The subtitle of the chart shows the model/design summary and, on a second
+line, the pooled random-effects HR with its 95% CI, the p-value, tau² and I².
+With `boundary_route = "analysis"`, the position and size of the
+"Analysis-route endpoint ... reached" label can be set with
+`endpoint_label_x`, `endpoint_label_y` and `endpoint_label_size`.
 
 ### Using your own data
 

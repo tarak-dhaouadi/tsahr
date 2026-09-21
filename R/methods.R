@@ -65,6 +65,29 @@ summary.tsa_hr <- function(object, ...) {
   invisible(object$summary_table)
 }
 
+## Internal helper (0.2.8): the second subtitle line of the TSA plot --
+## pooled random-effects HR with its 95% CI, the p-value of the pooled
+## effect, tau^2 and I^2. Everything comes from the fitted random-effects
+## model (x$res_re, the metafor::rma() object) and x$heterogeneity, i.e.
+## the same numbers print()/summary() report; nothing is recomputed here.
+## "2" is written as the Unicode superscript two (\u00b2), as already done
+## for the Diversity D-squared in the first subtitle line. Missing pieces
+## (e.g. an object saved by an older version) print as "NA" instead of
+## erroring. Not exported.
+.tsahr_pooled_subtitle <- function(x) {
+  num <- function(v) if (is.null(v) || length(v) != 1L) NA_real_ else as.numeric(v)
+  re   <- x$res_re
+  b    <- num(re$b)
+  lo   <- num(re$ci.lb)
+  hi   <- num(re$ci.ub)
+  pv   <- num(re$pval)
+  tau2 <- num(x$heterogeneity$tau2)
+  I2   <- num(x$heterogeneity$I2)
+  p_txt <- if (is.na(pv)) "p = NA" else if (pv < 0.001) "p < 0.001" else sprintf("p = %.3f", pv)
+  sprintf("Pooled HR = %.2f [95%% CI: %.2f, %.2f] | %s | Tau\u00b2 = %.4f | I\u00b2 = %.1f%%",
+          exp(b), exp(lo), exp(hi), p_txt, tau2, I2)
+}
+
 #' Plot a tsa_hr object
 #'
 #' Produces the standard Trial Sequential Analysis chart: cumulative
@@ -77,6 +100,12 @@ summary.tsa_hr <- function(object, ...) {
 #' which the observed accrued statistical information reached DARIS. The
 #' two lines are shown and labelled separately, since they are different
 #' quantities that need not coincide (see \code{?tsa_hr}, Section 7b).
+#'
+#' The subtitle has two lines: the model and design summary (random-effects
+#' model, Diversity D^2, anticipated HR, allocation psi, alpha and power),
+#' and, from 0.2.8, the pooled random-effects HR with its 95\% CI, the
+#' p-value of the pooled effect, tau^2 and I^2 (the same values
+#' \code{print()} and \code{summary()} report).
 #'
 #' @param x An object of class \code{"tsa_hr"}.
 #' @param legend Logical; show the boundary-type legend at the bottom of
@@ -113,6 +142,17 @@ summary.tsa_hr <- function(object, ...) {
 #' @param events_label_x,events_label_y Position (in data coordinates) for
 #'   the "Events accrued" label. Default \code{NULL} uses the built-in
 #'   position (bottom right, above the last data point).
+#' @param endpoint_label_size Font size for the "Analysis-route endpoint
+#'   (Design_R x DARIS) reached" label (only shown when
+#'   \code{boundary_route = "analysis"} and the analysis-route endpoint was
+#'   reached). Default \code{NULL} uses the same size as
+#'   \code{info_threshold_label_size} (\code{3.2} unless changed), which is
+#'   what this label followed before 0.2.8.
+#' @param endpoint_label_x,endpoint_label_y Position (in data coordinates: x
+#'   = cumulative events, y = Z-score) for the "Analysis-route endpoint
+#'   (Design_R x DARIS) reached" label. Default \code{NULL} uses the
+#'   built-in position (just right of its vertical line, below the "DARIS
+#'   information reached" label).
 #' @param alpha_col Color for the alpha (efficacy) boundary line. Default
 #'   \code{"firebrick"}.
 #' @param beta_col Color for the beta (futility) boundary line. Default
@@ -135,6 +175,8 @@ plot.tsa_hr <- function(x, legend = TRUE, caption = TRUE,
                          info_threshold_label_x = NULL, info_threshold_label_y = NULL,
                          events_label_size = 3.2,
                          events_label_x = NULL, events_label_y = NULL,
+                         endpoint_label_size = NULL,
+                         endpoint_label_x = NULL, endpoint_label_y = NULL,
                          alpha_col = "firebrick", beta_col = "blue",
                          naive_col = "darkgreen", z_col = "black",
                          ...) {
@@ -261,9 +303,11 @@ plot.tsa_hr <- function(x, legend = TRUE, caption = TRUE,
     ggplot2::scale_linewidth_manual(values = line_widths, guide = "none") +
     ggplot2::labs(
       title = "Trial Sequential Analysis of Hazard Ratios",
-      subtitle = sprintf(
-        "Random-effects model | Diversity D\u00b2 = %.0f%% | Anticipated HR = %.2f | psi = %.3f | alpha=%.0f%%, power=%.0f%%",
-        D2 * 100, HR_anticipated, allocation_p_used, alpha_two_sided * 100, power * 100),
+      subtitle = paste0(
+        sprintf(
+          "Random-effects model | Diversity D\u00b2 = %.0f%% | Anticipated HR = %.2f | psi = %.3f | alpha=%.0f%%, power=%.0f%%",
+          D2 * 100, HR_anticipated, allocation_p_used, alpha_two_sided * 100, power * 100),
+        "\n", .tsahr_pooled_subtitle(x)),
       x = "Cumulative number of events",
       y = "Cumulative Z-score"
     ) +
@@ -317,13 +361,17 @@ plot.tsa_hr <- function(x, legend = TRUE, caption = TRUE,
       ggplot2::geom_vline(xintercept = route_endpoint_events, color = "purple4",
                            linetype = "longdash", linewidth = 0.6) +
       ggplot2::annotate("text",
-                         x = route_endpoint_events,
-                         y = y_limit * 0.58,
+                         x = if (is.null(endpoint_label_x)) route_endpoint_events
+                             else endpoint_label_x,
+                         y = if (is.null(endpoint_label_y)) y_limit * 0.58
+                             else endpoint_label_y,
                          label = paste0("Analysis-route endpoint (",
                                         sprintf("%.3f", route_endpoint),
                                         " x DARIS) reached ~ ",
                                         ceiling(route_endpoint_events), " events (est.)"),
-                         hjust = -0.05, vjust = 0, size = info_threshold_label_size,
+                         hjust = -0.05, vjust = 0,
+                         size = if (is.null(endpoint_label_size)) info_threshold_label_size
+                                else endpoint_label_size,
                          color = "purple4")
   }
 

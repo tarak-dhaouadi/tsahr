@@ -1,3 +1,42 @@
+# tsahr 0.2.8
+
+## Pooled-effect line in the TSA plot subtitle, configurable endpoint label, new example datasets
+
+* **`plot()`: pooled-effect line in the subtitle.** Below the existing subtitle
+  line ("Random-effects model | Diversity D² | Anticipated HR = ... | ...") the
+  plot now shows a second line: `Pooled HR = 0.51 [95% CI: 0.48, 0.54] | p <
+  0.001 | Tau² = 0.0136 | I² = 73.3%`. The values are the ones `print()` and
+  `summary()` already report (`res$res_re`, `res$heterogeneity`); nothing is
+  recomputed. HR and CI use 2 decimals, tau² 4, I² 1; p-values below 0.001 are
+  shown as `p < 0.001`, others with 3 decimals. The "2" in Tau² and I² is the
+  Unicode superscript two, as for Diversity D². Internal helper
+  `.tsahr_pooled_subtitle()`.
+* **`plot()`: `endpoint_label_x`, `endpoint_label_y`, `endpoint_label_size`.**
+  Position (data coordinates: cumulative events, Z-score) and font size of the
+  "Analysis-route endpoint (Design_R x DARIS) reached" label, which is drawn
+  only for `boundary_route = "analysis"` when the endpoint was reached. The
+  defaults reproduce the previous plot exactly: the label sits just right of
+  its vertical line at 58% of the upper y limit, and `endpoint_label_size =
+  NULL` still follows `info_threshold_label_size` (3.2 by default). Same
+  conventions as the other `*_label_x/_y/_size` arguments.
+* **New bundled example datasets (breaking for anyone relying on the old file).**
+  `inst/extdata/HR_meta_example.xlsx` (10 studies) is replaced by `HR_meta.xlsx`
+  (20 studies) and `HR_meta_2.xlsx` (40 studies). `tsahr_example_data()` gains
+  a `dataset` argument, `"HR_meta"` (default) or `"HR_meta_2"`; calling it with
+  no argument now returns the 20-study file. The new sheets already use
+  underscores in their headers (`Events_Treatment`, ...). Examples in the
+  documentation and README use the new data.
+* **Tests keep the old dataset.** Many tests pin numbers computed on the old
+  10-study data (boundaries, DARIS, D2, RTSA parity, ...), so it is kept,
+  unchanged, as `tests/testthat/testdata/HR_meta_legacy_10studies.xlsx` and read
+  through `legacy_example_data()` (`tests/testthat/helper-data.R`); those tests
+  are otherwise untouched. New tests in `test-plot-and-example-data-0.2.8.R`
+  cover the two datasets (shape, columns, `tsa_hr()` and `plot()` run), the
+  subtitle line and the endpoint-label arguments. No numbers are pinned for the
+  new datasets.
+* Version bumped to 0.2.8. No change to the boundary engine, `tsa_hr()`'s
+  results or any decision field.
+
 # tsahr 0.2.7.22
 
 ## Fixes the `spend == beta` knife-edge (low-information designs), relicenses as GPL (>= 2) with RTSA credited, and small fixes

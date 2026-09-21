@@ -18,7 +18,7 @@ under_info <- data.frame(  # never reaches DARIS (target_HR = 0.80)
 )
 
 test_that("boundary_route defaults to \"design\" and matches explicit \"design\"", {
-  path <- tsahr_example_data()
+  path <- legacy_example_data()
 
   res_default <- suppressMessages(tsa_hr(path, target_HR = 0.80, verbose = FALSE))
   res_design  <- suppressMessages(tsa_hr(path, target_HR = 0.80, verbose = FALSE,
@@ -37,7 +37,7 @@ test_that("boundary_route defaults to \"design\" and matches explicit \"design\"
 })
 
 test_that("boundary_route = \"analysis\" moves the endpoint to design_R and changes the timeline", {
-  path <- tsahr_example_data()
+  path <- legacy_example_data()
 
   res_design   <- suppressMessages(tsa_hr(path, target_HR = 0.80, verbose = FALSE,
                                            boundary_route = "design"))
@@ -60,7 +60,7 @@ test_that("boundary_route = \"analysis\" moves the endpoint to design_R and chan
 })
 
 test_that("0.2.7.14: DARIS and the analysis-route endpoint are reported separately", {
-  path <- tsahr_example_data()
+  path <- legacy_example_data()
   res_d <- suppressMessages(tsa_hr(path, target_HR = 0.80, verbose = FALSE))
   res_a <- suppressMessages(tsa_hr(path, target_HR = 0.80, verbose = FALSE,
                                     boundary_route = "analysis"))
@@ -184,7 +184,7 @@ test_that("tsa_hr() definitive-look fields: reached, crossing, non-crossing, not
 })
 
 test_that("legacy_fallback is validated and the default path returns a normal result", {
-  path <- tsahr_example_data()
+  path <- legacy_example_data()
   expect_error(tsa_hr(path, target_HR = 0.80, verbose = FALSE,
                        legacy_fallback = NA),
                "legacy_fallback must be a single TRUE or FALSE")
@@ -205,7 +205,7 @@ test_that("design-route failure: legacy fallback is flagged; legacy_fallback = F
     .rtsa_design_bounds = function(...) stop("simulated design failure"),
     .package = "tsahr"
   )
-  path <- tsahr_example_data()
+  path <- legacy_example_data()
 
   expect_warning(
     res <- suppressMessages(tsa_hr(path, target_HR = 0.80, verbose = FALSE)),
@@ -238,7 +238,7 @@ test_that("design-route failure: legacy fallback is flagged; legacy_fallback = F
 
 test_that("analysis-route failure: falls back to the DESIGN route (flagged); FALSE errors", {
   skip_if_not_installed("testthat", "3.2.0")
-  path <- tsahr_example_data()
+  path <- legacy_example_data()
   res_design <- suppressMessages(tsa_hr(path, target_HR = 0.80, verbose = FALSE))
 
   testthat::local_mocked_bindings(
@@ -271,7 +271,7 @@ test_that("analysis-route failure: falls back to the DESIGN route (flagged); FAL
 })
 
 test_that("boundary_route rejects invalid values", {
-  path <- tsahr_example_data()
+  path <- legacy_example_data()
   expect_error(
     tsa_hr(path, target_HR = 0.80, verbose = FALSE, boundary_route = "bogus"),
     "should be one of"

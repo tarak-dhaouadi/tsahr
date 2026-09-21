@@ -356,7 +356,7 @@ test_that("legacy (non-RTSA-matching) beta engine internals have been removed", 
 
 test_that("0.2.7.1: za/zb near-convergence at the final look does not crash the grid", {
   ## Regression test for the R CMD check failure fixed in 0.2.7.1:
-  ## tsa_hr(path, verbose = FALSE) on the package's own bundled example
+  ## tsa_hr(path, verbose = FALSE) on the frozen 10-study (pre-0.2.8 bundled) example
   ## data, with target_HR left unspecified (the circular-target
   ## scenario), previously errored inside .rtsa2_z_n_w() with "Error in
   ## seq.default(1, length(xi) - 1, 1): wrong sign in 'by' argument".
@@ -367,7 +367,7 @@ test_that("0.2.7.1: za/zb near-convergence at the final look does not crash the 
   ## past zb[i], the Simpson's-rule integration grid .rtsa2_z_n_w()
   ## builds on [za[i], zb[i]] could collapse to <= 1 point, which the
   ## unguarded seq(1, length(xi) - 1, 1) call could not handle.
-  path <- tsahr_example_data()
+  path <- legacy_example_data()
 
   ## This is the exact call that previously crashed R CMD check.
   expect_warning(

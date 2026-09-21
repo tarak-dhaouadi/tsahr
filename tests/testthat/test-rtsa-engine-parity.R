@@ -143,7 +143,7 @@ test_that("design and analysis routes match a live RTSA::boundaries() call (when
 })
 
 test_that("tsa_hr() futility bounds at pre-DARIS looks come from the design route", {
-  path <- tsahr_example_data()
+  path <- legacy_example_data()
   res <- suppressMessages(suppressWarnings(tsa_hr(path, target_HR = 0.80,
                                                    verbose = FALSE)))
   expect_identical(res$beta_engine$engine, "rtsa_design_cpp")
@@ -155,7 +155,7 @@ test_that("tsa_hr() futility bounds at pre-DARIS looks come from the design rout
 })
 
 test_that("tsa_hr() final futility equals the RTSA design-pass final bound and the final efficacy bound", {
-  path <- tsahr_example_data()
+  path <- legacy_example_data()
   res <- suppressMessages(suppressWarnings(tsa_hr(path, target_HR = 0.80,
                                                    verbose = FALSE)))
   bt <- res$boundary_timeline
@@ -174,7 +174,7 @@ test_that("legacy fallback is loud: immediate warning, flagged engine, banner in
     .rtsa_design_bounds = function(...) stop("simulated engine failure"),
     .package = "tsahr"
   )
-  path <- tsahr_example_data()
+  path <- legacy_example_data()
   expect_warning(
     res <- suppressMessages(tsa_hr(path, target_HR = 0.80, verbose = FALSE)),
     "LEGACY, APPROXIMATE"

@@ -175,7 +175,7 @@ test_that("0.2.7.11: tsa_hr()'s beta_engine now comes from the RTSA-derived desi
   ## Supersedes the 0.2.7.7 check that beta_engine carried `design_R`:
   ## tsa_hr() now runs RTSA's type = "design" pass (compiled engine), whose
   ## calibrated information-scale root is reported as `warp_root`/`root`.
-  path <- tsahr_example_data()
+  path <- legacy_example_data()
   res <- suppressMessages(suppressWarnings(tsa_hr(path, verbose = FALSE)))
   expect_s3_class(res, "tsa_hr")
   expect_true(!is.null(res$beta_engine))
