@@ -165,7 +165,7 @@ orchestration (`R/rtsa_engine.R`) and the earlier R-only reconstruction of it
 Trial Unit; the RTSA manual is heavily inspired by the user manual for TSA by
 Kristian Thorlund, Janus Engstrøm, Jørn Wetterslev, Jesper Brok, Georgina
 Imberger and Christian Gluud. The original TSA software is available at
-<https://ctu.dk/tsa/>:
+<https://ctu.dk/tools>:
 
 > Copenhagen Trial Unit, Centre for Clinical Intervention Research,
 > Department 3344, Rigshospitalet, DK-2100 Copenhagen Ø, Denmark.

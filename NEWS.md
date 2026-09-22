@@ -1,3 +1,15 @@
+# tsahr 0.2.8.1
+
+## CRAN `--as-cran` check fixes
+
+* **DESCRIPTION: corrected the Copenhagen Trial Unit URL.** The TSA software
+  reference `<https://ctu.dk/tsa/>` returned a 404; replaced with the correct
+  `<https://ctu.dk/tools>` (also fixed in `README.md`).
+* **DESCRIPTION: removed the redundant `Author:` field.** It duplicated (and
+  had drifted from) the field R derives automatically from `Authors@R`,
+  triggering a `checking DESCRIPTION meta-information ... NOTE`. `Authors@R`
+  is now the sole source of truth for the `Author` field.
+
 # tsahr 0.2.8
 
 ## Pooled-effect line in the TSA plot subtitle, configurable endpoint label, new example datasets
