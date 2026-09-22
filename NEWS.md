@@ -1,3 +1,30 @@
+# tsahr 0.2.8.2
+
+## Validation against RTSA reference engines
+
+The alpha- and beta-boundary engines were independently validated against
+the corresponding RTSA implementations.
+
+For the reference validation design:
+
+* information fractions were identical to RTSA;
+* alpha upper boundaries reproduced the RTSA values;
+* cumulative beta spending reproduced RTSA to numerical tolerance;
+* incremental beta spending reproduced RTSA to numerical tolerance;
+* beta/futility boundaries reproduced RTSA to numerical tolerance;
+* the beta-spending sentinel behavior and activation point were identical;
+* the final cumulative beta spending reached the specified `beta` value.
+
+In the reference test, cumulative and incremental beta spending agreed with
+RTSA to a tolerance of `1e-12`, and the finite beta boundaries agreed
+numerically at all monitored looks (n=40).
+
+These tests establish numerical equivalence of the `tsahr` alpha- and
+beta-engine calculations with the corresponding RTSA reference
+implementation for the validated configuration. They should not be
+interpreted as a formal proof of equivalence for every possible parameter
+combination.
+
 # tsahr 0.2.8.1
 
 ## CRAN `--as-cran` check fixes
