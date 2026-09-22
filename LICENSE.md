@@ -32,7 +32,7 @@ the original TSA software.
 
 The original TSA software is available from the Copenhagen Trial Unit:
 
-https://ctu.dk/tsa/
+https://ctu.dk/tools
 
 ## GNU General Public License
 
