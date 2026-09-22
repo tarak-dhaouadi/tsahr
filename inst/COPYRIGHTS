@@ -37,7 +37,7 @@ RTSA is the R version of Trial Sequential Analysis (TSA), originally
 developed as a stand-alone Java program by the Copenhagen Trial Unit. The RTSA
 manual is heavily inspired by the user manual for TSA by Kristian Thorlund,
 Janus Engstroem, Joern Wetterslev, Jesper Brok, Georgina Imberger and
-Christian Gluud. The original TSA software: https://ctu.dk/tsa/
+Christian Gluud. The original TSA software: https://ctu.dk/tools
 
   Copenhagen Trial Unit
   Centre for Clinical Intervention Research
