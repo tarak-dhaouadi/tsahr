@@ -184,8 +184,9 @@ summary.tsa_hr <- function(object, ...) {
 #'   analysis-route endpoint label).
 #' @param xmax_mult Positive number; multiplier applied to the largest x
 #'   value that must fit in the plot (accrued events, theoretical DARIS,
-#'   DARIS information marker, analysis-route endpoint, and the last x of the
-#'   formal boundaries) to obtain the upper limit of the x-axis. Default
+#'   DARIS information marker, historical-rate projection, analysis-route
+#'   endpoint, and the last x of the formal boundaries) to obtain the upper
+#'   limit of the x-axis. Default
 #'   \code{1.15}, i.e. 15\% of free space to the right. Use a larger value
 #'   (e.g. \code{1.4}) to leave more room for labels, or \code{1} to end the
 #'   axis exactly at the largest element. Values below \code{1} crop the

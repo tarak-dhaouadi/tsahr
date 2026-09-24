@@ -1,3 +1,31 @@
+# tsahr 0.2.8.10
+
+## Release hygiene: NAMESPACE, roxygen tags, and a stricter zero-event test
+
+* **NAMESPACE.** Was maintained by hand and had drifted from what roxygen2
+  would actually generate: it declared `useDynLib(tsahr, .registration =
+  TRUE)` and `importFrom(Rcpp, sourceCpp)` with no corresponding roxygen tags
+  anywhere in `R/*.R`, and an `importFrom(utils, globalVariables)` that
+  nothing requested and that isn't needed (the call in `zzz.R` is already
+  fully qualified as `utils::globalVariables()`). Added the missing
+  `@useDynLib`/`@importFrom Rcpp sourceCpp` tags (on a new `"_PACKAGE"`
+  sentinel in `zzz.R`) and regenerated `NAMESPACE` in standard roxygen2
+  output format; confirmed against `devtools::document()` with roxygen2
+  8.1.0 (matching `Config/roxygen2/version` in `DESCRIPTION`).
+* **Documentation.** `xmax_mult`'s roxygen doc (`?plot.tsa_hr`) now lists the
+  historical-rate projection among the values that must fit in the plot's
+  x-axis; it was added to the plot in 0.2.8.7/0.2.8.8 but the doc line was
+  never updated.
+* **Tests.** The two zero-event tests in `test-tsa_hr.R` used to wrap
+  `tsa_hr()` in `tryCatch(..., error = function(e) NULL)` and `skip_if` on a
+  `NULL` result, so the suite could pass whether or not zero-event handling
+  was broken. Zero-event studies are a documented, deliberate feature (see
+  "Zero-event studies" in `?tsa_hr`; they're excluded from the events
+  projection only, and the exclusion is reported), so both tests now call
+  `tsa_hr()` unconditionally and assert `expect_s3_class(res, "tsa_hr")` --
+  they fail instead of skipping if this behavior ever regresses.
+* No change to the mathematics, boundaries, or decisions.
+
 # tsahr 0.2.8.9
 
 ## Design route: DARIS position at the historical rate in the printed output

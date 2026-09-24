@@ -724,9 +724,11 @@ test_that("projection: studies without events are skipped for the events figure 
     Events_Treatment = c(0, rep(50, 6)), N_treatment = rep(1000, 7),
     Events_controls  = c(0, rep(50, 6)), N_controls  = rep(1000, 7)
   )
-  res <- tryCatch(suppressWarnings(tsa_hr(d, target_HR = 0.80, verbose = FALSE)),
-                  error = function(e) NULL)
-  skip_if(is.null(res), "a zero-event first study is not accepted by tsa_hr()")
+  ## Zero-event studies are documented as accepted (see "Zero-event studies"
+  ## in ?tsa_hr): tsa_hr() must not error on them, so this is enforced here
+  ## rather than silently skipped when it does.
+  res <- suppressWarnings(tsa_hr(d, target_HR = 0.80, verbose = FALSE))
+  expect_s3_class(res, "tsa_hr")
   pr <- res$projection
   skip_if(isTRUE(res$results$final_reached), "target reached; nothing to project")
   expect_true(is.finite(pr$central_info_per_event))
@@ -825,10 +827,11 @@ test_that("info_per_event_basis switches between study-level and pooled ratios",
 
 test_that("zero-event studies are excluded from the events projection and reported", {
   d <- .proj_data(ev_t = c(0, rep(50, 6)), ev_c = c(0, rep(50, 6)))
-  out <- tryCatch(
-    utils::capture.output(res <- suppressWarnings(tsa_hr(d, target_HR = 0.80, verbose = TRUE))),
-    error = function(e) NULL)
-  skip_if(is.null(out), "a zero-event first study is not accepted by tsa_hr()")
+  ## Zero-event studies are documented as accepted (see "Zero-event studies"
+  ## in ?tsa_hr): tsa_hr() must not error on them, so this is enforced here
+  ## rather than silently skipped when it does.
+  out <- utils::capture.output(res <- suppressWarnings(tsa_hr(d, target_HR = 0.80, verbose = TRUE)))
+  expect_s3_class(res, "tsa_hr")
   skip_if(isTRUE(res$results$daris_reached), "DARIS reached; nothing to project")
   pr <- res$projection
   expect_equal(pr$n_zero_event_studies, 1L)
