@@ -127,6 +127,21 @@
 #'   \code{"analysis"}, how it changes the formal endpoint, the "DARIS
 #'   reached" verdict, and every decision field in \code{results} --
 #'   this is more than swapping out the futility numbers.
+#' @param projection_stat Character string, one of \code{"median"}
+#'   (default) or \code{"mean"}, selecting the summary statistic used to
+#'   turn the OBSERVED per-study information/event increments (i.e. each
+#'   included study's own contribution: \code{1/Std_Error^2} for
+#'   information, \code{total events} for events) into a single "typical
+#'   future study" increment for the retrospective additional-studies/
+#'   additional-events projection described under "Estimated additional
+#'   studies/events" in Details. \code{"median"} is the default because it
+#'   is more robust to a single unusually large or small study inflating
+#'   or deflating the projection; \code{"mean"} is offered as an
+#'   alternative when that robustness is not wanted (e.g. a deliberately
+#'   evenly-sized set of studies). This has no effect on any other
+#'   quantity returned by \code{tsa_hr()} -- it only feeds the
+#'   \code{projection} element of the return value and the corresponding
+#'   printed/plotted text.
 #' @param legacy_fallback Logical, default \code{TRUE}. Governs what
 #'   happens if the compiled RTSA-derived boundary engine fails to produce
 #'   a result for the requested design (e.g. no root bracket exists for an
@@ -288,6 +303,52 @@
 #' fallback. The shortcut is no longer ported, so the result no longer depends on
 #' the last bit of \code{beta}.
 #'
+#' \strong{Estimated additional studies/events (retrospective projection).}
+#' Whenever the route's target has NOT been reached in the observed data
+#' (\code{results$daris_reached == FALSE} for \code{boundary_route =
+#' "design"}; \code{results$final_reached == FALSE} for \code{"analysis"}),
+#' \code{tsa_hr()} additionally projects how many more studies, and
+#' roughly how many more events, would be needed to reach it -- based
+#' directly on the OBSERVED study-level information increments already in
+#' the data, not on any new assumption about future trial size. This is
+#' deliberately a retrospective, data-driven HR-specific counterpart to
+#' RTSA's own prospective \code{minTrial()}/\code{ris(..., type =
+#' "retrospective")} machinery, not a re-implementation of it.
+#'
+#' The target information \code{I_required} differs by route -- computed
+#' separately, never conflated:
+#' \itemize{
+#'   \item{\code{"design"}: \code{I_required = DARIS} (the information
+#'     target is DARIS itself, i.e. \code{information_size$DARIS_info}).}
+#'   \item{\code{"analysis"}: \code{I_required = design_R x DARIS} (the
+#'     analysis-route endpoint, i.e. \code{information_size$route_endpoint_info}).}
+#' }
+#' The shortfall \code{I_required - info_accrued_final} is divided by a
+#' single "typical future study" information increment -- the
+#' \code{projection_stat} (median by default, or mean) of each included
+#' study's own \code{1/Std_Error^2} -- and rounded up to the nearest whole
+#' study, so the estimate is always a natural number. The same central
+#' statistic applied to each study's own event count gives the
+#' corresponding approximate additional-events figure for the analysis
+#' route. For the design route, the additional-events figure shown is NOT
+#' this projection but the direct, deterministic Schoenfeld-scale
+#' difference \code{DARIS_events - events_accrued} (both already
+#' pooled-psi event-equivalents), since no further projection is needed
+#' there -- only the additional-STUDIES estimate uses the
+#' \code{projection_stat} machinery for that route.
+#'
+#' This projection is deliberately NOT called "number of studies required"
+#' anywhere in \code{tsa_hr()}'s output: that phrasing reads as
+#' deterministic, and it is not one. It is printed/labelled "Estimated
+#' additional studies to reach DARIS" (or the analysis-route equivalent),
+#' always with the caveat: \dQuote{Projection assumes future studies
+#' contribute information at approximately the observed historical rate;
+#' it is not a formal guarantee of the number of future studies required.}
+#' The full detail is returned in \code{projection} (see "Value"); when
+#' the endpoint HAS already been reached, \code{projection$n_additional_studies}
+#' and \code{projection$additional_events_estimated} are \code{NA} (there
+#' is nothing left to project), and nothing is printed or plotted for it.
+#'
 #' @return An object of class \code{"tsa_hr"}: a list containing the fitted
 #'   random-effects and fixed-effect \code{metafor::rma} model objects,
 #'   heterogeneity statistics (including \code{D2}, capped at 99.9% for
@@ -323,7 +384,14 @@
 #'   \code{fallback_route}, \code{fallback_reason}, the resolved
 #'   \code{route_endpoint} (\code{1} for \code{"design"}, \code{design_R}
 #'   for \code{"analysis"}), \code{route_endpoint_info} and
-#'   \code{used_legacy_engine}, and a summary data frame (character
+#'   \code{used_legacy_engine}, a \code{projection} list (see "Estimated
+#'   additional studies/events" above) with \code{method}
+#'   (\code{projection_stat} used), \code{I_required}, \code{info_accrued},
+#'   \code{additional_info_required}, \code{central_info_increment},
+#'   \code{central_event_increment}, \code{n_additional_studies},
+#'   \code{additional_events_estimated} and, design-route only,
+#'   \code{additional_events_required_design} -- all \code{NA} once the
+#'   route's endpoint has been reached, and a summary data frame (character
 #'   \code{Parameter} and \code{Value} columns; \code{Value} is character so
 #'   logical rows print as TRUE/FALSE/NA rather than 1/0/NA). Use
 #'   \code{plot()}, \code{summary()}, or \code{print()} on the result.
@@ -358,10 +426,12 @@ tsa_hr <- function(data,
                     order_by = NULL,
                     verbose = TRUE,
                     boundary_route = c("design", "analysis"),
-                    legacy_fallback = TRUE) {
+                    legacy_fallback = TRUE,
+                    projection_stat = c("median", "mean")) {
 
   allocation_source <- match.arg(allocation_source)
   boundary_route <- match.arg(boundary_route)
+  projection_stat <- match.arg(projection_stat)
   if (!is.logical(legacy_fallback) || length(legacy_fallback) != 1L ||
       is.na(legacy_fallback))
     stop("legacy_fallback must be a single TRUE or FALSE")
@@ -1277,6 +1347,84 @@ tsa_hr <- function(data,
   final_entered_futility_region <- definitive$final_entered_futility_region
   final_non_efficacy            <- definitive$final_non_efficacy
 
+  ## -----------------------------------------------------------------
+  ## 7d. Retrospective HR-specific projection: estimated additional
+  ##     studies/events needed to reach the route's own target
+  ##     information, based directly on the OBSERVED study-level
+  ##     information increments (see "Estimated additional
+  ##     studies/events" under ?tsa_hr Details).
+  ##
+  ##     I_required is computed separately per route and never conflated:
+  ##       - design route:   I_required = DARIS            (DARIS_info)
+  ##       - analysis route: I_required = design_R x DARIS (route_endpoint_info)
+  ##     `central_info_increment`/`central_event_increment` are the
+  ##     `projection_stat` (median by default, mean if requested) of each
+  ##     included study's own information (1/Std_Error^2) and event count
+  ##     -- i.e. a single "typical future study" increment estimated from
+  ##     the studies already in the data, not from any new assumption.
+  ##     `n_additional_studies` is always rounded UP to a natural number
+  ##     (>= 1 whenever there is a genuine positive shortfall).
+  ## -----------------------------------------------------------------
+  events_accrued     <- sum(data$total_events)
+  info_accrued_final <- cumul_df$info_accrued[nrow(cumul_df)]
+
+  per_study_info_increment  <- 1 / data$Std_Error^2
+  per_study_event_increment <- data$total_events
+  central_info_increment  <- if (identical(projection_stat, "mean")) {
+    mean(per_study_info_increment)
+  } else {
+    stats::median(per_study_info_increment)
+  }
+  central_event_increment <- if (identical(projection_stat, "mean")) {
+    mean(per_study_event_increment)
+  } else {
+    stats::median(per_study_event_increment)
+  }
+
+  I_required <- route_endpoint_info
+  additional_info_required_raw <- I_required - info_accrued_final
+
+  n_additional_studies_est    <- NA_integer_
+  additional_events_estimated <- NA_real_
+  if (!final_reached && additional_info_required_raw > 0 &&
+      is.finite(central_info_increment) && central_info_increment > 0) {
+    ## Rounded UP so the estimate is always a whole ("natural") number of
+    ## studies, and never below 1 whenever a genuine shortfall exists.
+    n_additional_studies_est <- max(1L, ceiling(additional_info_required_raw /
+                                                  central_info_increment))
+    additional_events_estimated <- n_additional_studies_est * central_event_increment
+  }
+
+  ## Design-route additional-events figure is NOT the projection above: it
+  ## is the direct, deterministic Schoenfeld-scale difference between the
+  ## two event-equivalents already computed in Section 5 (DARIS_events)
+  ## and Section 8 below (events_accrued) -- both under the same pooled-psi
+  ## assumption, so no further projection is needed for this one figure.
+  additional_events_required_design <- if (!daris_reached) {
+    max(ceiling(DARIS_events - events_accrued), 0)
+  } else {
+    NA_real_
+  }
+
+  projection_note <- paste0(
+    "Projection assumes future studies contribute information at ",
+    "approximately the observed historical rate; it is not a formal ",
+    "guarantee of the number of future studies required."
+  )
+
+  projection <- list(
+    method = projection_stat,
+    I_required = I_required,
+    info_accrued = info_accrued_final,
+    additional_info_required = if (!final_reached) max(additional_info_required_raw, 0) else NA_real_,
+    central_info_increment = central_info_increment,
+    central_event_increment = central_event_increment,
+    n_additional_studies = n_additional_studies_est,
+    additional_events_estimated = additional_events_estimated,
+    additional_events_required_design = additional_events_required_design,
+    note = projection_note
+  )
+
   if (verbose) {
     if (final_reached && final_tsa_look < nrow(cumul_df)) {
       cat(sprintf(paste0("Note: %s was reached at study #%d of %d ('%s'). Formal TSA\n",
@@ -1325,6 +1473,47 @@ tsa_hr <- function(data,
       }
     }
     cat("\n")
+    ## Estimated additional studies/events (7d) -- printed only when the
+    ## route's own target has NOT been reached; design and analysis routes
+    ## use different labels/figures (see 7d comment above and ?tsa_hr,
+    ## "Estimated additional studies/events").
+    if (!analysis_endpoint && !daris_reached) {
+      cat(sprintf("Events accrued = %.0f\n\n", events_accrued))
+      cat(sprintf("Additional events required: %.0f\n\n", additional_events_required_design))
+      if (is.na(n_additional_studies_est)) {
+        cat("Estimated additional studies required to reach DARIS: cannot be estimated\n")
+        cat("  (no usable historical per-study information increment to project from)\n")
+      } else {
+        cat(sprintf("Estimated additional studies required to reach DARIS: %d\n",
+                    n_additional_studies_est))
+      }
+      cat(strwrap(paste0("Note: ", projection_note), width = 78,
+                  prefix = "", initial = ""), sep = "\n")
+      cat("\n")
+    } else if (analysis_endpoint && !final_reached) {
+      cat(sprintf(
+        paste0("Analysis-route endpoint (%.3f x DARIS) = %s information units): ",
+               "%s cumulative events\n"),
+        route_endpoint,
+        formatC(route_endpoint_info, format = "f", digits = 4, big.mark = ","),
+        formatC(boundary_endpoint_events, format = "f", digits = 0, big.mark = ",")))
+      cat(sprintf("Additional information required: %s\n",
+                  formatC(projection$additional_info_required, format = "f",
+                          digits = 3, big.mark = ",")))
+      if (is.na(n_additional_studies_est)) {
+        cat("Estimated additional events required: cannot be estimated\n")
+        cat("Estimated additional studies required: cannot be estimated\n")
+        cat("  (no usable historical per-study information increment to project from)\n")
+      } else {
+        cat(sprintf("Estimated additional events required: ~%s\n",
+                    formatC(ceiling(additional_events_estimated), format = "d", big.mark = ",")))
+        cat(sprintf("Estimated additional studies required: %d\n",
+                    n_additional_studies_est))
+      }
+      cat(strwrap(paste0("Note: ", projection_note), width = 78,
+                  prefix = "", initial = ""), sep = "\n")
+      cat("\n")
+    }
     cat(strwrap(paste0(
       "Note: The \u03c4\u00b2 estimator may have limited influence on the pooled ",
       "average effect-size when the evidence base is substantial, but it can ",
@@ -1338,8 +1527,7 @@ tsa_hr <- function(data,
   ## -----------------------------------------------------------------
   ## 8. Summary table
   ## -----------------------------------------------------------------
-  events_accrued <- sum(data$total_events)
-  info_accrued_final <- cumul_df$info_accrued[nrow(cumul_df)]
+  ## events_accrued / info_accrued_final are already computed in 7d above.
 
   ## ** 0.2.7.14: ** decision rows distinguish "at ANY formal look" from "at
   ## the DEFINITIVE look" (see the decision-fields comment above); the
@@ -1375,6 +1563,31 @@ tsa_hr <- function(data,
       route_endpoint))
     sum_val <- c(sum_val, ifelse(is.na(route_endpoint_events_est), NA_real_,
                                  ceiling(route_endpoint_events_est)))
+  }
+  ## Estimated additional studies/events rows (7d) -- appended only when
+  ## the route's own target has NOT been reached, matching the printed
+  ## verbose output; design and analysis routes report different figures
+  ## (see 7d comment and ?tsa_hr, "Estimated additional studies/events").
+  if (!analysis_endpoint && !daris_reached) {
+    sum_par <- c(sum_par,
+                 "Additional events required to reach DARIS (Schoenfeld-scale)",
+                 sprintf("Estimated additional studies to reach DARIS (%s-based projection)",
+                        projection_stat))
+    sum_val <- c(sum_val,
+                 additional_events_required_design,
+                 ifelse(is.na(n_additional_studies_est), NA_real_, n_additional_studies_est))
+  } else if (analysis_endpoint && !final_reached) {
+    sum_par <- c(sum_par,
+                 sprintf("Additional information required to reach the analysis-route endpoint (%.3f x DARIS)",
+                        route_endpoint),
+                 "Estimated additional events to reach the analysis-route endpoint (projected, approximate)",
+                 sprintf("Estimated additional studies to reach the analysis-route endpoint (%s-based projection)",
+                        projection_stat))
+    sum_val <- c(sum_val,
+                 round(projection$additional_info_required, 4),
+                 ifelse(is.na(additional_events_estimated), NA_real_,
+                        ceiling(additional_events_estimated)),
+                 ifelse(is.na(n_additional_studies_est), NA_real_, n_additional_studies_est))
   }
   sum_par <- c(sum_par,
                "Crossed conventional boundary",
@@ -1437,6 +1650,7 @@ tsa_hr <- function(data,
                     fallback_route = fallback_route,
                     fallback_reason = fallback_reason,
                     used_legacy_engine = used_legacy),
+    projection = projection,
     summary_table = summary_df
   )
   class(out) <- "tsa_hr"

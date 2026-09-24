@@ -5,7 +5,8 @@
 tsa_hr(data, alpha_two_sided = 0.05, power = 0.80,
   allocation_source = c("data", "manual"), allocation_p = 0.5,
   target_HR = NA_real_, method = "DL", order_by = NULL, verbose = TRUE,
-  boundary_route = c("design", "analysis"), legacy_fallback = TRUE)
+  boundary_route = c("design", "analysis"), legacy_fallback = TRUE,
+  projection_stat = c("median", "mean"))
 }
 \arguments{
 \item{data}{A data.frame, or a path to an .xlsx file, containing one row
@@ -115,6 +116,21 @@ pre-0.2.7.11 R-only approximate engine with an immediate warning (not
 RTSA-comparable); \code{FALSE} instead stops \code{tsa_hr()} with an error
 (strict fail-closed behaviour, appropriate when the result will be
 reported as RTSA-equivalent).}
+
+\item{projection_stat}{Character string, one of \code{"median"} (default)
+or \code{"mean"}, selecting the summary statistic used to turn the
+OBSERVED per-study information/event increments (i.e. each included
+study's own contribution: \code{1/Std_Error^2} for information,
+\code{total events} for events) into a single "typical future study"
+increment for the retrospective additional-studies/additional-events
+projection described under "Estimated additional studies/events" in
+Details. \code{"median"} is the default because it is more robust to a
+single unusually large or small study inflating or deflating the
+projection; \code{"mean"} is offered as an alternative when that
+robustness is not wanted (e.g. a deliberately evenly-sized set of
+studies). This has no effect on any other quantity returned by
+\code{tsa_hr()} -- it only feeds the \code{projection} element of the
+return value and the corresponding printed/plotted text.}
 }
 \value{
 An object of class \code{"tsa_hr"}: a list containing the fitted
@@ -150,7 +166,14 @@ formal stopping recommendation; the definitive-look fields
 \code{legacy_fallback}, \code{fallback_used}, \code{fallback_route},
 \code{fallback_reason}, the resolved \code{route_endpoint} (\code{1} for
 \code{"design"}, \code{design_R} for \code{"analysis"}),
-\code{route_endpoint_info} and \code{used_legacy_engine}, and a summary data
+\code{route_endpoint_info} and \code{used_legacy_engine}, a
+\code{projection} list (see "Estimated additional studies/events" under
+Details) with \code{method} (the \code{projection_stat} used),
+\code{I_required}, \code{info_accrued}, \code{additional_info_required},
+\code{central_info_increment}, \code{central_event_increment},
+\code{n_additional_studies}, \code{additional_events_estimated} and,
+design-route only, \code{additional_events_required_design} -- all
+\code{NA} once the route's endpoint has been reached, and a summary data
 frame (character \code{Parameter} and \code{Value} columns; \code{Value} is
 character so logical rows print as TRUE/FALSE/NA rather than 1/0/NA). Use \code{plot()}, \code{summary()}, or \code{print()} on the
 result.
@@ -318,6 +341,53 @@ depending on the last bit of \code{beta}; tsahr computes \code{beta = 1 - power}
 and used to hit it at power 0.80, losing the compiled engine to the legacy
 fallback. The shortcut is no longer ported, so the result no longer depends on
 the last bit of \code{beta}.
+
+\strong{Estimated additional studies/events (retrospective projection,
+0.2.8.4).} Whenever the route's target has NOT been reached in the
+observed data (\code{results$daris_reached == FALSE} for
+\code{boundary_route = "design"}; \code{results$final_reached == FALSE}
+for \code{"analysis"}), \code{tsa_hr()} additionally projects how many
+more studies, and roughly how many more events, would be needed to reach
+it -- based directly on the OBSERVED study-level information increments
+already in the data, not on any new assumption about future trial size.
+This is deliberately a retrospective, data-driven HR-specific counterpart
+to RTSA's own prospective \code{minTrial()}/\code{ris(..., type =
+"retrospective")} machinery, not a re-implementation of it.
+
+The target information \code{I_required} differs by route -- computed
+separately, never conflated:
+\describe{
+  \item{\code{"design"}}{\code{I_required = DARIS} (the information
+    target is DARIS itself, i.e. \code{information_size$DARIS_info}).}
+  \item{\code{"analysis"}}{\code{I_required = design_R x DARIS} (the
+    analysis-route endpoint, i.e.
+    \code{information_size$route_endpoint_info}).}
+}
+The shortfall \code{I_required - info_accrued_final} is divided by a
+single "typical future study" information increment -- the
+\code{projection_stat} (median by default, or mean) of each included
+study's own \code{1/Std_Error^2} -- and rounded up to the nearest whole
+study, so the estimate is always a natural number. The same central
+statistic applied to each study's own event count gives the
+corresponding approximate additional-events figure for the analysis
+route. For the design route, the additional-events figure shown is NOT
+this projection but the direct, deterministic Schoenfeld-scale difference
+\code{DARIS_events - events_accrued} (both already pooled-psi
+event-equivalents), since no further projection is needed there -- only
+the additional-STUDIES estimate uses the \code{projection_stat} machinery
+for that route.
+
+This projection is deliberately NOT called "number of studies required"
+anywhere in \code{tsa_hr()}'s output: that phrasing reads as
+deterministic, and it is not one. It is printed/labelled "Estimated
+additional studies to reach DARIS" (or the analysis-route equivalent),
+always with the caveat: \dQuote{Projection assumes future studies
+contribute information at approximately the observed historical rate; it
+is not a formal guarantee of the number of future studies required.} The
+full detail is returned in \code{projection} (see "Value"); when the
+endpoint HAS already been reached, \code{projection$n_additional_studies}
+and \code{projection$additional_events_estimated} are \code{NA} (there is
+nothing left to project), and nothing is printed or plotted for it.
 }
 \examples{
 \donttest{

@@ -21,7 +21,12 @@
 plot. Default \code{TRUE}.}
 
 \item{caption}{Logical; show the methods caption below the plot. Default
-\code{TRUE}.}
+\code{TRUE}. From 0.2.8.4, when the route's own endpoint (DARIS for
+\code{boundary_route = "design"}; the analysis-route endpoint for
+\code{"analysis"}) has not yet been reached, the caption also gains a
+final line: "Estimated additional events required: xxxx, Estimated
+additional studies required: xx" -- see \code{?tsa_hr}, "Estimated
+additional studies/events".}
 
 \item{caption_size}{Font size for the methods caption text. Default
 \code{8}.}

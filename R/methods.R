@@ -443,6 +443,27 @@ plot.tsa_hr <- function(x, legend = TRUE, caption = TRUE,
         "\nBoundary route: RTSA analysis (formal endpoint = %.3f x DARIS information)",
         route_endpoint))
     }
+    ## Estimated additional events/studies (7d in tsa_hr()) -- appended as
+    ## its own caption line, below everything else, only when the route's
+    ## own target has not been reached (design: DARIS; analysis: the
+    ## analysis-route endpoint). Uses the deterministic Schoenfeld-scale
+    ## events figure for the design route and the projected (approximate)
+    ## figure for the analysis route, matching tsa_hr()'s printed output.
+    projection <- x$projection
+    if (!is.null(projection) && !is.na(projection$n_additional_studies)) {
+      show_projection_caption <- if (analysis_route) !isTRUE(final_reached) else !isTRUE(daris_reached)
+      if (show_projection_caption) {
+        additional_events_caption <- if (analysis_route) {
+          projection$additional_events_estimated
+        } else {
+          projection$additional_events_required_design
+        }
+        methods_caption <- paste0(methods_caption, sprintf(
+          "\nEstimated additional events required: %s, Estimated additional studies required: %d",
+          formatC(ceiling(additional_events_caption), format = "d", big.mark = ","),
+          projection$n_additional_studies))
+      }
+    }
     p <- p + ggplot2::labs(caption = methods_caption) +
       ggplot2::theme(plot.caption = ggplot2::element_text(
         hjust = 0, size = caption_size, face = caption_face))

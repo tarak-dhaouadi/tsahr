@@ -1,3 +1,57 @@
+# tsahr 0.2.8.4
+
+## New: retrospective "estimated additional studies/events" projection
+
+* **New feature.** Whenever the route's own target has not yet been reached
+  in the observed data, `tsa_hr()` now projects how many more studies, and
+  roughly how many more events, would be needed to reach it -- a
+  retrospective, HR-specific counterpart to RTSA's own prospective
+  `minTrial()` / `ris(..., type = "retrospective")` machinery, built
+  directly from tsahr's own observed study-level information increments
+  rather than reimplementing RTSA's.
+* The target information is computed **separately per route, never
+  conflated**:
+  - `boundary_route = "design"`: `I_required = DARIS`.
+  - `boundary_route = "analysis"`: `I_required = design_R x DARIS` (the
+    analysis-route endpoint).
+* The projection is driven by a single "typical future study" increment:
+  the **median** (default) or **mean** of each included study's own
+  information contribution (`1/Std_Error^2`) and event count. New argument
+  **`projection_stat = c("median", "mean")`** selects which; median is the
+  default because it is more robust to one unusually large/small study.
+  `n_additional_studies` is always rounded **up** to a natural number
+  (minimum 1 whenever a genuine shortfall exists).
+* Deliberately **not** labelled "number of studies required" anywhere
+  (that phrasing reads as deterministic): printed/summarised as "Estimated
+  additional studies to reach DARIS" (or the analysis-route equivalent),
+  always with the caveat: *"Projection assumes future studies contribute
+  information at approximately the observed historical rate; it is not a
+  formal guarantee of the number of future studies required."*
+* For the **design** route, the additional-*events* figure shown is the
+  direct, deterministic Schoenfeld-scale difference
+  `DARIS_events - events_accrued` (no projection needed there); only the
+  additional-*studies* estimate uses the median/mean projection. For the
+  **analysis** route, both the additional-events and additional-studies
+  figures are projected (the events figure is marked with `~`, since it is
+  an approximation, unlike the design route's figure).
+* New console output (`verbose = TRUE`), printed right after the existing
+  "Required information size (DARIS) reached" block, and new rows in
+  `summary()`'s table, shown only when the relevant endpoint has not been
+  reached.
+* `plot()` now appends a line to the methods caption, below everything
+  else, when the endpoint has not been reached: `"Estimated additional
+  events required: xxxx, Estimated additional studies required: xx"`.
+* The full detail is returned in a new `projection` element of the
+  `tsa_hr()` result: `method`, `I_required`, `info_accrued`,
+  `additional_info_required`, `central_info_increment`,
+  `central_event_increment`, `n_additional_studies`,
+  `additional_events_estimated`, and (design route only)
+  `additional_events_required_design`. All fields are `NA` once the
+  route's own endpoint has already been reached.
+* No change to any existing boundary/decision calculation, to `print()`'s
+  existing lines, or to any existing `summary()`/`plot()` output when the
+  endpoint has already been reached -- this is purely additive.
+
 # tsahr 0.2.8.3
 
 ## `plot()`: analysis-route endpoint marker missing when the endpoint is beyond DARIS
