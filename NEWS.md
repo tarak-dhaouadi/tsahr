@@ -1,3 +1,28 @@
+# tsahr 0.2.8.3
+
+## `plot()`: analysis-route endpoint marker missing when the endpoint is beyond DARIS
+
+* **Fixed.** With `boundary_route = "analysis"`, the vertical line and label of
+  the analysis-route endpoint (design_R x DARIS) were drawn only when that
+  endpoint had been *reached* in the observed data (`results$final_reached`).
+  When design_R > 1 the endpoint lies beyond the theoretical DARIS
+  event-equivalent and is usually not yet reached, so neither the vertical nor
+  the label appeared, although the formal boundaries still ended at
+  `DARIS_events * design_R`. (When design_R < 1 the endpoint is reached as soon
+  as DARIS is, so the marker was always shown.)
+* The plot now also draws the vertical at the theoretical position
+  `DARIS_events * design_R` when the endpoint has not been reached, labelled
+  "Analysis-route endpoint (... x DARIS) not yet reached; theoretical ~ N
+  events". The reached case is unchanged. `endpoint_label_x/_y/_size` apply to
+  both wordings.
+* The x-axis range now always includes the last x of the formal boundaries, so
+  a boundary ending beyond 1.15 x the largest reference line is no longer drawn
+  outside the panel.
+* New `plot()` argument `xmax_mult` (default `1.15`, the previous hard-coded
+  value): multiplier applied to the largest x element to set the upper x-axis
+  limit, e.g. `plot(res, xmax_mult = 1.5)` for more room on the right.
+* No change to the boundary/decision calculations, `print()` or `summary()`.
+
 # tsahr 0.2.8.2
 
 ## Validation against RTSA reference engines

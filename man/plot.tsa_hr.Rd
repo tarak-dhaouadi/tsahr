@@ -10,7 +10,7 @@
   info_threshold_label_y = NULL,
   events_label_size = 3.2, events_label_x = NULL, events_label_y = NULL,
   endpoint_label_size = NULL, endpoint_label_x = NULL,
-  endpoint_label_y = NULL,
+  endpoint_label_y = NULL, xmax_mult = 1.15,
   alpha_col = "firebrick", beta_col = "blue", naive_col = "darkgreen",
   z_col = "black", ...)
 }
@@ -63,8 +63,9 @@ position (bottom right, above the last data point).}
 
 \item{endpoint_label_size}{Font size for the "Analysis-route endpoint
 (Design_R x DARIS) reached" label (only shown when
-\code{boundary_route = "analysis"} and the analysis-route endpoint was
-reached). Default \code{NULL} uses the same size as
+\code{boundary_route = "analysis"}; from 0.2.8.3 it is also drawn, worded
+"not yet reached; theoretical ~ N events", at the theoretical position
+when the endpoint has not been reached). Default \code{NULL} uses the same size as
 \code{info_threshold_label_size} (\code{3.2} unless changed), which is
 what this label followed before 0.2.8.}
 
@@ -73,6 +74,15 @@ what this label followed before 0.2.8.}
 (Design_R x DARIS) reached" label. Default \code{NULL} uses the built-in
 position (just right of its vertical line, below the "DARIS information
 reached" label).}
+
+\item{xmax_mult}{Positive number; multiplier applied to the largest x
+value that must fit in the plot (accrued events, theoretical DARIS,
+DARIS information marker, analysis-route endpoint, and the last x of the
+formal boundaries) to obtain the upper limit of the x-axis. Default
+\code{1.15}, i.e. 15\% of free space to the right. Use a larger value
+(e.g. \code{1.4}) to leave more room for labels, or \code{1} to end the
+axis exactly at the largest element. Values below \code{1} crop the
+right-hand part of the plot.}
 
 \item{alpha_col}{Color for the alpha (efficacy) boundary line. Default
 \code{"firebrick"}.}

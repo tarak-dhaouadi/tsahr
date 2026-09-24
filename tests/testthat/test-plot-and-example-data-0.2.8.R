@@ -168,3 +168,54 @@ test_that("endpoint_label_x / _y / _size position and size the endpoint label", 
   expect_equal(l3$data$x, l0$data$x)
   expect_equal(l3$data$y, 3)
 })
+
+## ---------------------------------------------------------------------------
+## (3) 0.2.8.3: analysis-route endpoint marker when the endpoint is NOT reached
+## ---------------------------------------------------------------------------
+
+test_that("analysis route: endpoint vertical + label are drawn even when not reached (design_R > 1)", {
+  res <- suppressWarnings(suppressMessages(
+    tsa_hr(legacy_example_data(), target_HR = 0.80, verbose = FALSE,
+           boundary_route = "analysis")))
+  skip_if_not(identical(res$settings$route_used, "analysis"),
+              "analysis route fell back to the design route")
+
+  ## Force the "beyond DARIS, not reached" state (drawing only).
+  res$results$final_reached <- FALSE
+  res$settings$route_endpoint <- 1.25
+  expected_x <- res$information_size$DARIS_events * 1.25
+
+  p <- suppressMessages(plot(res))
+  l <- .endpoint_layer(p)
+  skip_if(is.null(l), "could not locate the endpoint label layer in this ggplot2 build")
+  expect_equal(l$data$x, expected_x)
+  expect_match(l$aes_params$label, "not yet reached; theoretical", fixed = TRUE)
+
+  ## a vertical line at the same x exists
+  vx <- vapply(p$layers, function(ly) {
+    v <- ly$data$xintercept; if (is.null(v)) NA_real_ else as.numeric(v)[1]
+  }, numeric(1))
+  ## (geom_vline stores xintercept in aes_params)
+  vx2 <- vapply(p$layers, function(ly) {
+    v <- ly$geom_params$xintercept; if (is.null(v)) NA_real_ else as.numeric(v)[1]
+  }, numeric(1))
+  expect_true(any(abs(c(vx, vx2) - expected_x) < 1e-8, na.rm = TRUE))
+
+  ## design route: unchanged, no endpoint label
+  res_d <- suppressWarnings(suppressMessages(
+    tsa_hr(legacy_example_data(), target_HR = 0.80, verbose = FALSE,
+           boundary_route = "design")))
+  expect_null(.endpoint_layer(suppressMessages(plot(res_d))))
+})
+
+test_that("plot(): xmax_mult scales the x-axis upper limit and is validated", {
+  res <- suppressWarnings(suppressMessages(
+    tsa_hr(legacy_example_data(), target_HR = 0.80, verbose = FALSE)))
+  xl <- function(m) suppressMessages(plot(res, xmax_mult = m))$coordinates$limits$x[2]
+  p_def <- suppressMessages(plot(res))$coordinates$limits$x[2]
+  expect_equal(xl(1.15), p_def)
+  expect_equal(xl(2) / xl(1.15), 2 / 1.15)
+  expect_error(plot(res, xmax_mult = 0), "xmax_mult")
+  expect_error(plot(res, xmax_mult = c(1, 2)), "xmax_mult")
+  expect_error(plot(res, xmax_mult = "a"), "xmax_mult")
+})

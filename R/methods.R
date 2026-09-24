@@ -144,8 +144,9 @@ summary.tsa_hr <- function(object, ...) {
 #'   position (bottom right, above the last data point).
 #' @param endpoint_label_size Font size for the "Analysis-route endpoint
 #'   (Design_R x DARIS) reached" label (only shown when
-#'   \code{boundary_route = "analysis"} and the analysis-route endpoint was
-#'   reached). Default \code{NULL} uses the same size as
+#'   \code{boundary_route = "analysis"}; from 0.2.8.3 it is also drawn, worded
+#'   "not yet reached; theoretical ~ N events", at the theoretical position
+#'   when the endpoint has not been reached). Default \code{NULL} uses the same size as
 #'   \code{info_threshold_label_size} (\code{3.2} unless changed), which is
 #'   what this label followed before 0.2.8.
 #' @param endpoint_label_x,endpoint_label_y Position (in data coordinates: x
@@ -153,6 +154,14 @@ summary.tsa_hr <- function(object, ...) {
 #'   (Design_R x DARIS) reached" label. Default \code{NULL} uses the
 #'   built-in position (just right of its vertical line, below the "DARIS
 #'   information reached" label).
+#' @param xmax_mult Positive number; multiplier applied to the largest x
+#'   value that must fit in the plot (accrued events, theoretical DARIS,
+#'   DARIS information marker, analysis-route endpoint, and the last x of the
+#'   formal boundaries) to obtain the upper limit of the x-axis. Default
+#'   \code{1.15}, i.e. 15\% of free space to the right. Use a larger value
+#'   (e.g. \code{1.4}) to leave more room for labels, or \code{1} to end the
+#'   axis exactly at the largest element. Values below \code{1} crop the
+#'   right-hand part of the plot.
 #' @param alpha_col Color for the alpha (efficacy) boundary line. Default
 #'   \code{"firebrick"}.
 #' @param beta_col Color for the beta (futility) boundary line. Default
@@ -177,11 +186,18 @@ plot.tsa_hr <- function(x, legend = TRUE, caption = TRUE,
                          events_label_x = NULL, events_label_y = NULL,
                          endpoint_label_size = NULL,
                          endpoint_label_x = NULL, endpoint_label_y = NULL,
+                         xmax_mult = 1.15,
                          alpha_col = "firebrick", beta_col = "blue",
                          naive_col = "darkgreen", z_col = "black",
                          ...) {
 
   cumul_df <- x$cumulative
+
+  if (!is.numeric(xmax_mult) || length(xmax_mult) != 1L ||
+      !is.finite(xmax_mult) || xmax_mult <= 0) {
+    stop("`xmax_mult` must be a single positive number (default 1.15).",
+         call. = FALSE)
+  }
   DARIS_events <- x$information_size$DARIS_events
   DARIS_info_threshold_events <- x$information_size$DARIS_info_threshold_events
   final_reached <- x$results$final_reached
@@ -195,6 +211,17 @@ plot.tsa_hr <- function(x, legend = TRUE, caption = TRUE,
   route_endpoint_events <- x$information_size$route_endpoint_events
   show_endpoint_marker <- analysis_route && isTRUE(final_reached) &&
     !is.null(route_endpoint_events) && !is.na(route_endpoint_events)
+  ## 0.2.8.3: the formal boundaries always terminate at the route endpoint
+  ## (observed-information estimate if reached, otherwise the theoretical
+  ## event-equivalent DARIS_events * route_endpoint). When design_R > 1 the
+  ## endpoint typically lies beyond the observed information, so it is NOT
+  ## reached; before 0.2.8.3 nothing marked where the boundaries ended in
+  ## that case (vertical line and caption were only drawn once reached).
+  ## The theoretical position is now drawn and labelled "not yet reached".
+  endpoint_theoretical_events <- DARIS_events * route_endpoint
+  show_endpoint_theoretical <- analysis_route && !show_endpoint_marker &&
+    is.finite(endpoint_theoretical_events) &&
+    !(isTRUE(all.equal(route_endpoint, 1)) && isTRUE(show_theoretical_daris))
 
   ## Two distinct quantities are shown on the plot, deliberately NOT
   ## conflated into a single "DARIS events" figure:
@@ -244,8 +271,12 @@ plot.tsa_hr <- function(x, legend = TRUE, caption = TRUE,
   x_max <- max(c(cumul_df$cum_events,
                   if (show_theoretical_daris) DARIS_events else NA,
                   if (show_info_threshold_marker) DARIS_info_threshold_events else NA,
-                  if (show_endpoint_marker) route_endpoint_events else NA),
-               na.rm = TRUE) * 1.15
+                  if (show_endpoint_marker) route_endpoint_events else NA,
+                  if (show_endpoint_theoretical) endpoint_theoretical_events else NA,
+                  ## 0.2.8.3: the boundaries' own last x (the route endpoint)
+                  ## must always fit inside the axis range
+                  boundary_line$cum_events[is.finite(boundary_line$cum_events)]),
+               na.rm = TRUE) * xmax_mult
 
   alpha_lines <- data.frame(
     cum_events = rep(boundary_line$cum_events, 2),
@@ -369,6 +400,29 @@ plot.tsa_hr <- function(x, legend = TRUE, caption = TRUE,
                                         sprintf("%.3f", route_endpoint),
                                         " x DARIS) reached ~ ",
                                         ceiling(route_endpoint_events), " events (est.)"),
+                         hjust = -0.05, vjust = 0,
+                         size = if (is.null(endpoint_label_size)) info_threshold_label_size
+                                else endpoint_label_size,
+                         color = "purple4")
+  }
+
+  ## Analysis route, endpoint NOT yet reached in the observed data (typically
+  ## design_R > 1): mark where the formal boundaries terminate, i.e. the
+  ## theoretical event-equivalent of design_R x DARIS. Analogous to the
+  ## theoretical DARIS line; the label says explicitly that it is not reached.
+  if (show_endpoint_theoretical) {
+    p <- p +
+      ggplot2::geom_vline(xintercept = endpoint_theoretical_events, color = "purple4",
+                           linetype = "longdash", linewidth = 0.6) +
+      ggplot2::annotate("text",
+                         x = if (is.null(endpoint_label_x)) endpoint_theoretical_events
+                             else endpoint_label_x,
+                         y = if (is.null(endpoint_label_y)) y_limit * 0.58
+                             else endpoint_label_y,
+                         label = paste0("Analysis-route endpoint (",
+                                        sprintf("%.3f", route_endpoint),
+                                        " x DARIS) not yet reached; theoretical ~ ",
+                                        ceiling(endpoint_theoretical_events), " events"),
                          hjust = -0.05, vjust = 0,
                          size = if (is.null(endpoint_label_size)) info_threshold_label_size
                                 else endpoint_label_size,
