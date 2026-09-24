@@ -6,7 +6,8 @@ tsa_hr(data, alpha_two_sided = 0.05, power = 0.80,
   allocation_source = c("data", "manual"), allocation_p = 0.5,
   target_HR = NA_real_, method = "DL", order_by = NULL, verbose = TRUE,
   boundary_route = c("design", "analysis"), legacy_fallback = TRUE,
-  projection_stat = c("median", "mean"))
+  projection_stat = c("median", "mean"),
+  info_per_event_basis = c("per_study", "pooled"))
 }
 \arguments{
 \item{data}{A data.frame, or a path to an .xlsx file, containing one row
@@ -117,20 +118,36 @@ RTSA-comparable); \code{FALSE} instead stops \code{tsa_hr()} with an error
 (strict fail-closed behaviour, appropriate when the result will be
 reported as RTSA-equivalent).}
 
-\item{projection_stat}{Character string, one of \code{"median"} (default)
-or \code{"mean"}, selecting the summary statistic used to turn the
-OBSERVED per-study information/event increments (i.e. each included
-study's own contribution: \code{1/Std_Error^2} for information,
-\code{total events} for events) into a single "typical future study"
-increment for the retrospective additional-studies/additional-events
-projection described under "Estimated additional studies/events" in
-Details. \code{"median"} is the default because it is more robust to a
-single unusually large or small study inflating or deflating the
-projection; \code{"mean"} is offered as an alternative when that
-robustness is not wanted (e.g. a deliberately evenly-sized set of
-studies). This has no effect on any other quantity returned by
-\code{tsa_hr()} -- it only feeds the \code{projection} element of the
-return value and the corresponding printed/plotted text.}
+\item{projection_stat}{Character string, one of \code{"median"}
+(default) or \code{"mean"}, selecting the summary statistic used to turn
+the OBSERVED per-study contributions into "typical" values for the
+retrospective projection described under "Estimated additional
+studies/events" in Details: the information per study
+(\code{1/Std_Error^2}, giving the additional-studies estimate) and the
+information per event (\code{1/Std_Error^2} divided by the study's
+\code{total events}, giving the additional-events estimate).
+\code{"median"} is the default because it is more robust to a single
+unusually large or small study; \code{"mean"} is offered as an
+alternative when that robustness is not wanted (e.g. a deliberately
+evenly-sized set of studies). This has no effect on any other quantity
+returned by \code{tsa_hr()} -- it only feeds the \code{projection}
+element of the return value and the corresponding printed/plotted text.}
+
+\item{info_per_event_basis}{Character string, one of \code{"per_study"} (default) or
+\code{"pooled"}, selecting how the "historical rate" of information per
+event used for the additional-EVENTS projection is obtained.
+\code{"per_study"}: the \code{projection_stat} (median by default, or
+mean) of each study's own information per event (\code{1/Std_Error^2}
+divided by its \code{total events}). \code{"pooled"}: the ratio of sums
+(total information / total events), which weights larger studies more and
+equals the slope of observed cumulative information against cumulative
+events. Studies with zero events (or another non-finite or non-positive
+ratio) are technically accepted but are excluded from either variant, and
+the number excluded is stated explicitly in the printed output. It does not
+affect the additional-STUDIES estimate, which always uses
+\code{projection_stat}. Both variants are always returned in
+\code{projection} as a sensitivity check.}
+
 }
 \value{
 An object of class \code{"tsa_hr"}: a list containing the fitted
@@ -169,10 +186,20 @@ formal stopping recommendation; the definitive-look fields
 \code{route_endpoint_info} and \code{used_legacy_engine}, a
 \code{projection} list (see "Estimated additional studies/events" under
 Details) with \code{method} (the \code{projection_stat} used),
-\code{I_required}, \code{info_accrued}, \code{additional_info_required},
+\code{info_per_event_basis}, \code{I_required}, \code{info_accrued},
+\code{events_accrued}, \code{additional_info_required},
 \code{central_info_increment}, \code{central_event_increment},
-\code{n_additional_studies}, \code{additional_events_estimated} and,
-design-route only, \code{additional_events_required_design} -- all
+\code{central_info_per_event} (the historical rate used),
+\code{study_level_info_per_event}, \code{pooled_info_per_event},
+\code{n_additional_studies}, \code{additional_events_estimated}
+(continuous, information / info per event, on the chosen basis),
+\code{additional_events_study_level}, \code{additional_events_pooled},
+\code{events_from_whole_studies}, \code{target_events_historical_rate}
+(accrued plus estimated additional events), \code{n_studies},
+\code{n_zero_event_studies}, \code{n_excluded_events_projection} and,
+\code{additional_events_required_design} (design-route only, equal to
+\code{additional_events_theoretical} there) and
+\code{additional_events_theoretical} -- the projected quantities are
 \code{NA} once the route's endpoint has been reached, and a summary data
 frame (character \code{Parameter} and \code{Value} columns; \code{Value} is
 character so logical rows print as TRUE/FALSE/NA rather than 1/0/NA). Use \code{plot()}, \code{summary()}, or \code{print()} on the
@@ -343,7 +370,7 @@ fallback. The shortcut is no longer ported, so the result no longer depends on
 the last bit of \code{beta}.
 
 \strong{Estimated additional studies/events (retrospective projection,
-0.2.8.4).} Whenever the route's target has NOT been reached in the
+0.2.8.4; events/studies split 0.2.8.5).} Whenever the route's target has NOT been reached in the
 observed data (\code{results$daris_reached == FALSE} for
 \code{boundary_route = "design"}; \code{results$final_reached == FALSE}
 for \code{"analysis"}), \code{tsa_hr()} additionally projects how many
@@ -363,31 +390,100 @@ separately, never conflated:
     analysis-route endpoint, i.e.
     \code{information_size$route_endpoint_info}).}
 }
-The shortfall \code{I_required - info_accrued_final} is divided by a
-single "typical future study" information increment -- the
-\code{projection_stat} (median by default, or mean) of each included
-study's own \code{1/Std_Error^2} -- and rounded up to the nearest whole
-study, so the estimate is always a natural number. The same central
-statistic applied to each study's own event count gives the
-corresponding approximate additional-events figure for the analysis
-route. For the design route, the additional-events figure shown is NOT
-this projection but the direct, deterministic Schoenfeld-scale difference
-\code{DARIS_events - events_accrued} (both already pooled-psi
-event-equivalents), since no further projection is needed there -- only
-the additional-STUDIES estimate uses the \code{projection_stat} machinery
-for that route.
+The shortfall \code{I_required - info_accrued_final} is translated in two
+separate ways, which answer different questions:
+\describe{
+  \item{Additional events (primary)}{The shortfall divided by a "historical
+    rate" of information per event, chosen with
+    \code{info_per_event_basis}: \code{"per_study"} (default) uses the
+    \code{projection_stat} (median by default, or mean) of each included
+    study's own \code{(1/Std_Error^2) / total_events}; \code{"pooled"} uses
+    the ratio of sums, total information / total events, which weights the
+    larger studies more and equals the slope of observed cumulative
+    information against cumulative events. The result is continuous and is
+    rounded up only for display. It is returned in
+    \code{projection$additional_events_estimated}; both variants are always
+    returned (\code{additional_events_study_level} and
+    \code{additional_events_pooled}) so the choice can be checked as a
+    sensitivity analysis.}
+  \item{Additional studies (secondary)}{The shortfall divided by a single
+    "typical future study" information increment -- the
+    \code{projection_stat} of each study's own \code{1/Std_Error^2} -- and
+    rounded up to the nearest whole study, so it is always a natural
+    number. It is not affected by \code{info_per_event_basis}.}
+}
+The two are deliberately not chained: the events figure is NOT the number
+of studies times an events-per-study increment, because rounding the
+studies up would inflate it. That chained quantity (whole typical studies x
+typical events per study) is still returned, as
+\code{projection$events_from_whole_studies}, but it answers "how many
+events would the minimum whole number of typical studies bring?", not "how
+many events are needed?".
+
+For both routes three separate quantities are reported when the route's
+own target has not been reached (printed output, \code{summary()} and the
+plot caption); for \code{boundary_route = "design"} the target is DARIS, for
+\code{"analysis"} it is the analysis-route endpoint (design_R x DARIS):
+\describe{
+  \item{Theoretical additional events (Schoenfeld)}{The direct,
+    deterministic difference between the theoretical event-equivalent of the
+    target (\code{DARIS_events} for design, \code{DARIS_events x design_R} for
+    analysis) and \code{events_accrued} (both already pooled-psi
+    event-equivalents), floored at 0
+    (\code{projection$additional_events_theoretical}; for the design route
+    this equals \code{projection$additional_events_required_design}).}
+  \item{Estimated additional events (historical rate)}{The events
+    projection above, with \code{I_required} set to the route's target
+    information (\code{projection$additional_events_estimated}).
+    \code{plot()} draws it as a second reference line, at accrued events plus
+    these additional events
+    (\code{projection$target_events_historical_rate}), next to the
+    theoretical line; see \code{show_historical_daris} in
+    \code{\link{plot.tsa_hr}}. The printed output and \code{summary()}
+    also give that position in cumulative events, just before the
+    additional-events figure ("DARIS (historical rate)" for the design
+    route; "Historical information/event-rate projection" for the
+    analysis route).}
+  \item{Estimated additional studies required}{The studies projection
+    above.}
+}
+These two events figures rest on different assumptions and can disagree --
+for example, when the studies supply less information per event than the
+psi*(1-psi) assumption behind the Schoenfeld figure, the historical-rate
+figure is larger, and it can be positive when the Schoenfeld figure is
+already 0. Both are approximations.
+
+\strong{Zero-event studies.} Studies with zero events (or another
+non-finite or non-positive information-per-event ratio) are technically
+accepted by \code{tsa_hr()} but carry information with no events to attach
+it to, so they are excluded from the information-per-event summaries (both
+variants) and hence from the events projection. They remain in the
+additional-studies projection and in every other result. The number
+excluded is stated explicitly in the printed output, in \code{summary()},
+and in the plot caption, and is returned as
+\code{projection$n_zero_event_studies} and
+\code{projection$n_excluded_events_projection}.
+
+\strong{Caveat: fixed-effect information scale.} All projections are
+linear extrapolations on the fixed-effect, study-level inverse-variance
+information scale (\code{1/Std_Error^2}) that \code{tsa_hr()} compares
+with DARIS. They deliberately do not model how random-effects weights or
+the between-study variance (tau^2) would change as further studies are
+added, nor any change in the size, allocation or baseline risk of future
+studies; the mathematics are not adjusted for random effects. Read every
+projected number of events or studies as indicative, not as a required
+quantity.
 
 This projection is deliberately NOT called "number of studies required"
 anywhere in \code{tsa_hr()}'s output: that phrasing reads as
-deterministic, and it is not one. It is printed/labelled "Estimated
-additional studies to reach DARIS" (or the analysis-route equivalent),
-always with the caveat: \dQuote{Projection assumes future studies
-contribute information at approximately the observed historical rate; it
-is not a formal guarantee of the number of future studies required.} The
-full detail is returned in \code{projection} (see "Value"); when the
-endpoint HAS already been reached, \code{projection$n_additional_studies}
-and \code{projection$additional_events_estimated} are \code{NA} (there is
-nothing left to project), and nothing is printed or plotted for it.
+deterministic, and it is not one. Figures are labelled "Estimated ...", and
+the printed output always carries a note that the projection assumes future
+studies contribute information at approximately the observed historical
+rate and is not a formal guarantee. The full detail is returned in
+\code{projection} (see "Value"); when the endpoint HAS already been
+reached, the projected fields (\code{n_additional_studies},
+\code{additional_events_estimated} and their variants) are \code{NA} (there
+is nothing left to project), and nothing is printed or plotted for it.
 }
 \examples{
 \donttest{

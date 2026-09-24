@@ -1,3 +1,143 @@
+# tsahr 0.2.8.9
+
+## Design route: DARIS position at the historical rate in the printed output
+
+* **Printed output** (design route, DARIS not reached): a new line
+  "DARIS (historical rate): ~N cumulative events" (with the
+  information-per-event rate used) is shown just before "Estimated additional
+  events to DARIS (historical rate)". N is the same position `plot()` draws as
+  the "DARIS (historical rate)" line (accrued events + estimated additional
+  events). `summary()` gets a matching row. This mirrors the analysis route's
+  "Historical information/event-rate projection" line.
+* No change to the mathematics, boundaries or decisions.
+
+# tsahr 0.2.8.8
+
+## Analysis route: clearer naming of the historical-rate projection
+
+* **Plot.** The analysis-route projection line is now labelled "Historical
+  information/event-rate projection ~ N events" (it was "Analysis-route
+  endpoint (historical rate) ~ N events (projected)"). Calling both the
+  theoretical and the projected line an "analysis-route endpoint" made them
+  read like two competing definitions of the endpoint; only the theoretical
+  line keeps that name. The design-route label ("DARIS (historical rate)") and
+  the caption wording are unchanged.
+* **Printed output** (analysis route, endpoint not reached): a new line
+  "Historical information/event-rate projection = ~N cumulative events" (with
+  the information-per-event rate used) is shown just before "Estimated
+  additional events to analysis-route endpoint (historical rate)". N is the
+  same position the plot line marks (accrued events + estimated additional
+  events). `summary()` gets a matching row.
+* No change to the mathematics, boundaries or decisions.
+
+# tsahr 0.2.8.7
+
+## Analysis route now mirrors the design route for projections
+
+* **Plot.** With `boundary_route = "analysis"` and the analysis-route endpoint
+  (design_R x DARIS) not reached, `plot()` now also draws an
+  "Analysis-route endpoint (historical rate)" vertical line at accrued events
+  + estimated additional events, next to the theoretical endpoint line.
+  `show_historical_daris`, `historical_label_size`, `historical_label_x` and
+  `historical_label_y` now apply to both routes (design: "DARIS (historical
+  rate)").
+* **Caption.** Both routes now show the theoretical and the historical-rate
+  additional events plus the studies estimate, e.g. for the analysis route:
+  "Theoretical additional events to analysis-route endpoint (Schoenfeld): X,
+  Estimated additional events to analysis-route endpoint (historical rate):
+  ~Y" and "Estimated additional studies required: N".
+* **Printed output and `summary()`** (analysis route) gain the same
+  theoretical/historical-rate pair; the former "Estimated additional events
+  required" line and "Estimated additional events to reach the analysis-route
+  endpoint (projected, approximate)" row are renamed accordingly.
+* New `projection$additional_events_theoretical` for both routes:
+  `max(ceiling(DARIS_events * route_endpoint - events_accrued), 0)`; for the
+  design route it equals `additional_events_required_design`.
+* No change to the mathematics, boundaries or decisions.
+
+# tsahr 0.2.8.6
+
+## Design-route projection output, plot and options
+
+* **Design route output.** When DARIS has not been reached, `tsa_hr()` now
+  reports three separate quantities (printed output, `summary()`, plot
+  caption):
+
+  ```
+  Theoretical additional events to DARIS (Schoenfeld): xxx
+  Estimated additional events to DARIS (historical rate): ~XXX
+  Estimated additional studies required: N
+  ```
+
+  The first is the deterministic `DARIS_events - events_accrued` (floored at
+  0); the second is the information-per-event projection introduced in
+  0.2.8.5 with `I_required = DARIS`. They rest on different assumptions and
+  can disagree (the second can be positive when the first is 0).
+* **Plot.** For the design route with DARIS not reached, `plot()` also draws a
+  "DARIS (historical rate)" vertical line at accrued events + estimated
+  additional events (`projection$target_events_historical_rate`), next to the
+  theoretical DARIS line. New arguments `show_historical_daris`,
+  `historical_label_size`, `historical_label_x`, `historical_label_y`. The
+  x-axis range accounts for it.
+* **New `tsa_hr()` argument `info_per_event_basis`** (`"per_study"`, default,
+  or `"pooled"`). `"per_study"` uses `projection_stat` (median by default) of
+  each study's information per event; `"pooled"` uses total information /
+  total events. It only affects the events projection; the studies
+  projection always uses `projection_stat`. Both variants are always
+  returned (`projection$additional_events_study_level`,
+  `projection$additional_events_pooled`, and the corresponding
+  `study_level_info_per_event` / `pooled_info_per_event`).
+* **Zero-event studies.** They are still accepted, but are excluded from the
+  information-per-event (events) projection (they carry information but no
+  events). The number excluded is now stated explicitly in the printed
+  output, in `summary()` (new row) and in the plot caption, and returned as
+  `projection$n_zero_event_studies` / `n_excluded_events_projection`. They
+  stay in the studies projection and in all other results.
+* **Caveat strengthened (no change to the mathematics).** The projection note
+  and the documentation now state that all projections are linear
+  extrapolations on the fixed-effect, study-level inverse-variance
+  information scale, and do not model how random-effects weights or
+  tau^2 would change as studies are added; they are indicative only.
+* New `projection` fields: `info_per_event_basis`, `events_accrued`,
+  `study_level_info_per_event`, `additional_events_study_level`,
+  `target_events_historical_rate`, `n_studies`, `n_zero_event_studies`,
+  `n_excluded_events_projection`. The summary-table row "Additional events
+  required to reach DARIS (Schoenfeld-scale)" is renamed "Theoretical
+  additional events to DARIS (Schoenfeld)".
+* Unchanged: the required information, boundaries, decisions, and the
+  analysis route's events and studies figures on the default basis.
+
+# tsahr 0.2.8.5
+
+## Changed: additional events are projected from information per event, not from whole studies
+
+* In 0.2.8.4 the analysis-route "Estimated additional events" was
+  `ceiling(shortfall / typical study information) x typical events per
+  study`, i.e. it was a consequence of the rounded-up number of studies. That
+  answers "how many events would that many whole studies bring?", not "how
+  many events are needed?" (e.g. shortfall 150, typical study 100 information
+  units / 500 events: 2 studies -> 1,000 events, whereas the information
+  projection is 150 / (100/500) = 750 events).
+* **Now:** `projection$additional_events_estimated` = shortfall / typical
+  information per event, where the typical value is the `projection_stat`
+  (median by default, or mean) of each study's own
+  `(1/Std_Error^2) / total_events`. It is continuous and rounded up only for
+  display (print, `summary()`, plot caption). Studies with no events are
+  ignored for this figure only.
+* `projection$n_additional_studies` is unchanged (shortfall / typical study
+  information, rounded up) and is now explicitly the secondary quantity.
+* New `projection` fields: `central_info_per_event`, `pooled_info_per_event`
+  (total information / total events), `additional_events_pooled` (the events
+  figure under that ratio-of-sums, as a sensitivity check) and
+  `events_from_whole_studies` (the old chained figure, kept and clearly
+  named).
+* The two figures are now reported independently: "cannot be estimated" is
+  shown separately for events and for studies, and the plot caption is only
+  added when both are available.
+* Unchanged: the design route's additional events (deterministic
+  Schoenfeld-scale `DARIS_events - events_accrued`), the required
+  information, all boundaries and decisions.
+
 # tsahr 0.2.8.4
 
 ## New: retrospective "estimated additional studies/events" projection

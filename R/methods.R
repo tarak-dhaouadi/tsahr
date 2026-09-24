@@ -111,7 +111,15 @@ summary.tsa_hr <- function(object, ...) {
 #' @param legend Logical; show the boundary-type legend at the bottom of
 #'   the plot. Default \code{TRUE}.
 #' @param caption Logical; show the methods caption below the plot.
-#'   Default \code{TRUE}.
+#'   Default \code{TRUE}. When the route's own endpoint (DARIS for
+#'   \code{boundary_route = "design"}; the analysis-route endpoint for
+#'   \code{"analysis"}) has not yet been reached, the caption gains final
+#'   lines with the projection: "Theoretical additional events to DARIS
+#'   (Schoenfeld)", "Estimated additional events to DARIS (historical rate)"
+#'   and "Estimated additional studies required" (for the analysis route,
+#'   "DARIS" reads "analysis-route endpoint"). A further line states how many studies
+#'   were excluded from the events projection (zero events), if any -- see
+#'   \code{?tsa_hr}, "Estimated additional studies/events".
 #' @param caption_size Font size for the methods caption text. Default
 #'   \code{8}.
 #' @param caption_face Font face for the methods caption text: one of
@@ -154,6 +162,26 @@ summary.tsa_hr <- function(object, ...) {
 #'   (Design_R x DARIS) reached" label. Default \code{NULL} uses the
 #'   built-in position (just right of its vertical line, below the "DARIS
 #'   information reached" label).
+#' @param show_historical_daris Logical; when the route's own target has not
+#'   been reached, draw an extra reference line at the target position
+#'   projected from the historical information-per-event rate (accrued
+#'   events plus the estimated additional events,
+#'   \code{projection$target_events_historical_rate}). For
+#'   \code{boundary_route = "design"} the target is DARIS and the line
+#'   ("DARIS (historical rate)") sits next to the theoretical (Schoenfeld)
+#'   DARIS line; for \code{"analysis"} the target is the analysis-route
+#'   endpoint (design_R x DARIS) and the line ("Historical
+#'   information/event-rate projection") sits next to the theoretical
+#'   endpoint line; it is a projection of where that same endpoint would be
+#'   reached, not a second definition of the endpoint.
+#'   Default \code{TRUE}. Only affects what is drawn.
+#' @param historical_label_size Font size for the historical-rate label.
+#'   Default \code{NULL} uses \code{daris_label_size}.
+#' @param historical_label_x,historical_label_y Position (in data
+#'   coordinates) for the historical-rate label. Default \code{NULL} uses
+#'   the built-in position (just right of its vertical line; design route
+#'   below the theoretical DARIS label, analysis route below the
+#'   analysis-route endpoint label).
 #' @param xmax_mult Positive number; multiplier applied to the largest x
 #'   value that must fit in the plot (accrued events, theoretical DARIS,
 #'   DARIS information marker, analysis-route endpoint, and the last x of the
@@ -186,6 +214,9 @@ plot.tsa_hr <- function(x, legend = TRUE, caption = TRUE,
                          events_label_x = NULL, events_label_y = NULL,
                          endpoint_label_size = NULL,
                          endpoint_label_x = NULL, endpoint_label_y = NULL,
+                         show_historical_daris = TRUE,
+                         historical_label_size = NULL,
+                         historical_label_x = NULL, historical_label_y = NULL,
                          xmax_mult = 1.15,
                          alpha_col = "firebrick", beta_col = "blue",
                          naive_col = "darkgreen", z_col = "black",
@@ -240,6 +271,20 @@ plot.tsa_hr <- function(x, legend = TRUE, caption = TRUE,
   ##     line (1) is shown, clearly labelled as not yet reached.
   show_info_threshold_marker <- daris_reached && !is.na(DARIS_info_threshold_events)
 
+  ## 0.2.8.6/0.2.8.7 (route's own target not reached): an extra reference
+  ## line at the target position projected from the historical
+  ## information-per-event rate, i.e. accrued events + estimated additional
+  ## events. Design route: DARIS; analysis route: the analysis-route endpoint
+  ## (design_R x DARIS). Distinct from the theoretical Schoenfeld line (1)
+  ## and the observed-information markers.
+  historical_target_events <- if (is.null(x$projection)) NA_real_ else
+    x$projection$target_events_historical_rate
+  if (is.null(historical_target_events) || length(historical_target_events) != 1L)
+    historical_target_events <- NA_real_
+  historical_target_reached <- if (analysis_route) isTRUE(final_reached) else isTRUE(daris_reached)
+  show_historical_daris <- isTRUE(show_historical_daris) && !historical_target_reached &&
+    is.finite(historical_target_events)
+
   z_alpha <- x$information_size$z_alpha
   D2 <- x$heterogeneity$D2
   AF <- x$heterogeneity$AF
@@ -273,6 +318,7 @@ plot.tsa_hr <- function(x, legend = TRUE, caption = TRUE,
                   if (show_info_threshold_marker) DARIS_info_threshold_events else NA,
                   if (show_endpoint_marker) route_endpoint_events else NA,
                   if (show_endpoint_theoretical) endpoint_theoretical_events else NA,
+                  if (show_historical_daris) historical_target_events else NA,
                   ## 0.2.8.3: the boundaries' own last x (the route endpoint)
                   ## must always fit inside the axis range
                   boundary_line$cum_events[is.finite(boundary_line$cum_events)]),
@@ -362,6 +408,42 @@ plot.tsa_hr <- function(x, legend = TRUE, caption = TRUE,
                          hjust = -0.05, vjust = 0, size = daris_label_size)
   }
 
+  ## Route's own target not reached: target position at the historical
+  ## information-per-event rate (accrued events + estimated additional
+  ## events). Drawn in addition to -- never instead of -- the theoretical
+  ## line(s); the label says it is projected. Design route: DARIS (label y =
+  ## 0.75, below the theoretical DARIS label; the observed-information
+  ## marker that shares that height needs DARIS to have been reached, so
+  ## they never coexist). Analysis route: the analysis-route endpoint
+  ## (label y = 0.41, below the endpoint label at 0.58 and the "DARIS
+  ## information reached" label at 0.75, which can coexist with it).
+  if (show_historical_daris) {
+    hist_label <- if (analysis_route) {
+      ## 0.2.8.8: deliberately NOT worded "analysis-route endpoint ...", which
+      ## would read as a second, competing definition of the endpoint; the
+      ## theoretical endpoint line keeps that name, this one is a projection.
+      paste0("Historical information/event-rate projection ~ ",
+             ceiling(historical_target_events), " events")
+    } else {
+      paste0("DARIS (historical rate) ~ ",
+             ceiling(historical_target_events), " events (projected)")
+    }
+    p <- p +
+      ggplot2::geom_vline(xintercept = historical_target_events, color = "darkorange3",
+                           linetype = "dotdash", linewidth = 0.6) +
+      ggplot2::annotate("text",
+                         x = if (is.null(historical_label_x)) historical_target_events
+                             else historical_label_x,
+                         y = if (is.null(historical_label_y)) {
+                               y_limit * (if (analysis_route) 0.41 else 0.75)
+                             } else historical_label_y,
+                         label = hist_label,
+                         hjust = -0.05, vjust = 0,
+                         size = if (is.null(historical_label_size)) daris_label_size
+                                else historical_label_size,
+                         color = "darkorange3")
+  }
+
   ## Second reference marker: the ESTIMATED cumulative-events point at
   ## which the observed accrued statistical information reached DARIS_info
   ## (see tsa_hr(), Section 7b). Added separately, and only when DARIS has
@@ -444,24 +526,50 @@ plot.tsa_hr <- function(x, legend = TRUE, caption = TRUE,
         route_endpoint))
     }
     ## Estimated additional events/studies (7d in tsa_hr()) -- appended as
-    ## its own caption line, below everything else, only when the route's
+    ## its own caption lines, below everything else, only when the route's
     ## own target has not been reached (design: DARIS; analysis: the
-    ## analysis-route endpoint). Uses the deterministic Schoenfeld-scale
-    ## events figure for the design route and the projected (approximate)
-    ## figure for the analysis route, matching tsa_hr()'s printed output.
+    ## analysis-route endpoint). Both routes (0.2.8.7) show the theoretical
+    ## Schoenfeld-scale figure AND the historical-rate estimate (remaining
+    ## information / information per event, NOT whole studies x events per
+    ## study), plus the studies estimate. The number of studies excluded
+    ## from the events projection (zero events) is stated when non-zero.
     projection <- x$projection
-    if (!is.null(projection) && !is.na(projection$n_additional_studies)) {
+    if (!is.null(projection)) {
       show_projection_caption <- if (analysis_route) !isTRUE(final_reached) else !isTRUE(daris_reached)
+      fmt_events <- function(v) formatC(ceiling(v), format = "d", big.mark = ",")
+      n_studies_cap <- projection$n_additional_studies
+      est_events_cap <- projection$additional_events_estimated
+      cap_lines <- character(0)
       if (show_projection_caption) {
-        additional_events_caption <- if (analysis_route) {
-          projection$additional_events_estimated
-        } else {
-          projection$additional_events_required_design
+        target_txt <- if (analysis_route) "analysis-route endpoint" else "DARIS"
+        theo_events_cap <- projection$additional_events_theoretical
+        if (is.null(theo_events_cap)) theo_events_cap <- projection$additional_events_required_design
+        events_parts <- c(
+          if (!is.null(theo_events_cap) && !is.na(theo_events_cap))
+            sprintf("Theoretical additional events to %s (Schoenfeld): %s",
+                    target_txt, fmt_events(theo_events_cap)),
+          if (!is.na(est_events_cap))
+            sprintf("Estimated additional events to %s (historical rate): ~%s",
+                    target_txt, fmt_events(est_events_cap)))
+        cap_lines <- c(
+          if (length(events_parts)) paste(events_parts, collapse = ", "),
+          if (!is.na(n_studies_cap))
+            sprintf("Estimated additional studies required: %d", n_studies_cap))
+        n_excl_cap <- projection$n_excluded_events_projection
+        if (length(cap_lines) && !is.null(n_excl_cap) && !is.na(n_excl_cap) && n_excl_cap > 0) {
+          n_zero_cap <- projection$n_zero_event_studies
+          cap_lines <- c(cap_lines, if (!is.null(n_zero_cap) && n_excl_cap == n_zero_cap) {
+            sprintf("%d zero-event %s excluded from the events projection",
+                    n_excl_cap, if (n_excl_cap == 1L) "study" else "studies")
+          } else {
+            sprintf("%d %s excluded from the events projection (zero events or unusable ratio)",
+                    n_excl_cap, if (n_excl_cap == 1L) "study" else "studies")
+          })
         }
-        methods_caption <- paste0(methods_caption, sprintf(
-          "\nEstimated additional events required: %s, Estimated additional studies required: %d",
-          formatC(ceiling(additional_events_caption), format = "d", big.mark = ","),
-          projection$n_additional_studies))
+      }
+      if (length(cap_lines)) {
+        methods_caption <- paste0(methods_caption, "\n",
+                                  paste(cap_lines, collapse = "\n"))
       }
     }
     p <- p + ggplot2::labs(caption = methods_caption) +

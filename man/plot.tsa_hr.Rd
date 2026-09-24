@@ -10,7 +10,9 @@
   info_threshold_label_y = NULL,
   events_label_size = 3.2, events_label_x = NULL, events_label_y = NULL,
   endpoint_label_size = NULL, endpoint_label_x = NULL,
-  endpoint_label_y = NULL, xmax_mult = 1.15,
+  endpoint_label_y = NULL, show_historical_daris = TRUE,
+  historical_label_size = NULL, historical_label_x = NULL,
+  historical_label_y = NULL, xmax_mult = 1.15,
   alpha_col = "firebrick", beta_col = "blue", naive_col = "darkgreen",
   z_col = "black", ...)
 }
@@ -21,12 +23,15 @@
 plot. Default \code{TRUE}.}
 
 \item{caption}{Logical; show the methods caption below the plot. Default
-\code{TRUE}. From 0.2.8.4, when the route's own endpoint (DARIS for
+\code{TRUE}. When the route's own endpoint (DARIS for
 \code{boundary_route = "design"}; the analysis-route endpoint for
-\code{"analysis"}) has not yet been reached, the caption also gains a
-final line: "Estimated additional events required: xxxx, Estimated
-additional studies required: xx" -- see \code{?tsa_hr}, "Estimated
-additional studies/events".}
+\code{"analysis"}) has not yet been reached, the caption gains final
+lines with the projection: "Theoretical additional events to DARIS
+(Schoenfeld)", "Estimated additional events to DARIS (historical rate)"
+and "Estimated additional studies required" (for the analysis route,
+"DARIS" reads "analysis-route endpoint"). A further line states how many
+studies were excluded from the events projection (zero events), if any --
+see \code{?tsa_hr}, "Estimated additional studies/events".}
 
 \item{caption_size}{Font size for the methods caption text. Default
 \code{8}.}
@@ -79,6 +84,29 @@ what this label followed before 0.2.8.}
 (Design_R x DARIS) reached" label. Default \code{NULL} uses the built-in
 position (just right of its vertical line, below the "DARIS information
 reached" label).}
+
+\item{show_historical_daris}{Logical; when the route's own target has not
+been reached, draw an extra reference line at the target position
+projected from the historical information-per-event rate (accrued
+events plus the estimated additional events,
+\code{projection$target_events_historical_rate}). For
+\code{boundary_route = "design"} the target is DARIS and the line
+("DARIS (historical rate)") sits next to the theoretical (Schoenfeld)
+DARIS line; for \code{"analysis"} the target is the analysis-route
+endpoint (design_R x DARIS) and the line ("Historical
+information/event-rate projection") sits next to the theoretical
+endpoint line; it is a projection of where that same endpoint would be
+reached, not a second definition of the endpoint.
+Default \code{TRUE}. Only affects what is drawn.}
+
+\item{historical_label_size}{Font size for the historical-rate label.
+Default \code{NULL} uses \code{daris_label_size}.}
+
+\item{historical_label_x, historical_label_y}{Position (in data
+coordinates) for the historical-rate label. Default \code{NULL} uses
+the built-in position (just right of its vertical line; design route
+below the theoretical DARIS label, analysis route below the
+analysis-route endpoint label).}
 
 \item{xmax_mult}{Positive number; multiplier applied to the largest x
 value that must fit in the plot (accrued events, theoretical DARIS,

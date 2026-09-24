@@ -219,3 +219,47 @@ test_that("plot(): xmax_mult scales the x-axis upper limit and is validated", {
   expect_error(plot(res, xmax_mult = c(1, 2)), "xmax_mult")
   expect_error(plot(res, xmax_mult = "a"), "xmax_mult")
 })
+
+test_that("analysis route: historical-rate line and caption lines (forced not-reached state)", {
+  res <- suppressWarnings(suppressMessages(
+    tsa_hr(legacy_example_data(), target_HR = 0.80, verbose = FALSE,
+           boundary_route = "analysis")))
+  skip_if_not(identical(res$settings$route_used, "analysis"),
+              "analysis route fell back to the design route")
+
+  ## Force the "endpoint not reached, projection available" state (drawing only).
+  res$results$final_reached <- FALSE
+  res$projection$additional_events_theoretical <- 500
+  res$projection$additional_events_estimated   <- 2500
+  res$projection$n_additional_studies          <- 4L
+  res$projection$target_events_historical_rate <- res$results$events_accrued + 2500
+  res$projection$n_excluded_events_projection  <- 0L
+  res$projection$n_zero_event_studies          <- 0L
+
+  p <- suppressMessages(plot(res))
+  labs <- vapply(p$layers, function(ly) {
+    l <- ly$aes_params$label
+    if (is.null(l)) NA_character_ else as.character(l)[1]
+  }, character(1))
+  skip_if(all(is.na(labs)), "could not read annotation labels in this ggplot2 build")
+  i <- grep("^Historical information/event-rate projection", labs)
+  expect_length(i, 1L)
+  expect_equal(p$layers[[i]]$data$x, res$results$events_accrued + 2500)
+
+  labs_off <- vapply(suppressMessages(plot(res, show_historical_daris = FALSE))$layers,
+                     function(ly) { l <- ly$aes_params$label
+                       if (is.null(l)) NA_character_ else as.character(l)[1] },
+                     character(1))
+  expect_length(grep("Historical information/event-rate projection", labs_off, fixed = TRUE), 0L)
+  ## the theoretical endpoint keeps the "Analysis-route endpoint" name; the
+  ## projection line is not called an endpoint
+  expect_false(any(grepl("^Analysis-route endpoint.*historical", labs)))
+
+  cap <- tryCatch(ggplot2::get_labs(p)$caption, error = function(e) p$labels$caption)
+  skip_if(is.null(cap), "could not read the caption in this ggplot2 build")
+  expect_match(cap, "Theoretical additional events to analysis-route endpoint (Schoenfeld): 500",
+               fixed = TRUE)
+  expect_match(cap, "Estimated additional events to analysis-route endpoint (historical rate): ~2,500",
+               fixed = TRUE)
+  expect_match(cap, "Estimated additional studies required: 4", fixed = TRUE)
+})

@@ -684,3 +684,233 @@ test_that("non-numeric input columns are diagnosed as a type problem", {
     tsa_hr(d, target_HR = 0.80, verbose = FALSE)
   )))
 })
+
+test_that("projection: additional events come from information per event, not from whole studies", {
+  ## 7 identical studies: 1/SE^2 = 6.25 information units and 100 events each,
+  ## so 0.0625 information per event for every summary statistic.
+  under_info <- data.frame(
+    Study = paste0("S", 1:7),
+    log_HR = rep(log(0.8), 7),
+    Std_Error = rep(0.4, 7),
+    Events_Treatment = rep(50, 7), N_treatment = rep(1000, 7),
+    Events_controls  = rep(50, 7), N_controls  = rep(1000, 7)
+  )
+  res <- suppressWarnings(tsa_hr(under_info, target_HR = 0.80, verbose = FALSE))
+  pr <- res$projection
+  skip_if(isTRUE(res$results$final_reached), "target reached; nothing to project")
+
+  short <- pr$I_required - pr$info_accrued
+  expect_gt(short, 0)
+  expect_equal(pr$additional_info_required, short)
+  expect_equal(pr$central_info_per_event, 0.0625)
+  expect_equal(pr$pooled_info_per_event, 0.0625)
+
+  ## primary: continuous events projection
+  expect_equal(pr$additional_events_estimated, short / 0.0625)
+  expect_equal(pr$additional_events_pooled, pr$additional_events_estimated)
+
+  ## secondary: whole studies, and the (different) chained figure
+  expect_equal(pr$n_additional_studies, ceiling(short / 6.25))
+  expect_equal(pr$events_from_whole_studies, pr$n_additional_studies * 100)
+  expect_gte(pr$events_from_whole_studies, pr$additional_events_estimated)
+  expect_lt(pr$additional_events_estimated, pr$n_additional_studies * 100 + 1e-8)
+})
+
+test_that("projection: studies without events are skipped for the events figure only", {
+  d <- data.frame(
+    Study = paste0("S", 1:7),
+    log_HR = rep(log(0.8), 7),
+    Std_Error = rep(0.4, 7),
+    Events_Treatment = c(0, rep(50, 6)), N_treatment = rep(1000, 7),
+    Events_controls  = c(0, rep(50, 6)), N_controls  = rep(1000, 7)
+  )
+  res <- tryCatch(suppressWarnings(tsa_hr(d, target_HR = 0.80, verbose = FALSE)),
+                  error = function(e) NULL)
+  skip_if(is.null(res), "a zero-event first study is not accepted by tsa_hr()")
+  pr <- res$projection
+  skip_if(isTRUE(res$results$final_reached), "target reached; nothing to project")
+  expect_true(is.finite(pr$central_info_per_event))
+  expect_equal(pr$central_info_per_event, 0.0625)
+  expect_true(is.finite(pr$n_additional_studies))
+})
+
+test_that("projection: nothing is projected once the target is reached", {
+  res <- suppressWarnings(tsa_hr(legacy_example_data(), target_HR = 0.80,
+                                 verbose = FALSE))
+  skip_if(!isTRUE(res$results$final_reached), "target not reached in this dataset")
+  expect_true(is.na(res$projection$additional_events_estimated))
+  expect_true(is.na(res$projection$n_additional_studies))
+  expect_true(is.na(res$projection$events_from_whole_studies))
+})
+
+## ---------------------------------------------------------------------------
+## 0.2.8.6: design-route output, info_per_event_basis, zero-event exclusion
+## ---------------------------------------------------------------------------
+
+.proj_data <- function(se = rep(0.4, 7), ev_t = rep(50, 7), ev_c = rep(50, 7)) {
+  data.frame(
+    Study = paste0("S", seq_along(se)),
+    log_HR = rep(log(0.8), length(se)),
+    Std_Error = se,
+    Events_Treatment = ev_t, N_treatment = rep(1000, length(se)),
+    Events_controls  = ev_c, N_controls  = rep(1000, length(se))
+  )
+}
+
+test_that("design route prints theoretical, historical-rate events and studies", {
+  out <- utils::capture.output(res <- suppressWarnings(
+    tsa_hr(.proj_data(), target_HR = 0.80, verbose = TRUE)))
+  skip_if(isTRUE(res$results$daris_reached), "DARIS reached; nothing to project")
+  expect_true(any(grepl("Theoretical additional events to DARIS (Schoenfeld):",
+                        out, fixed = TRUE)))
+  expect_true(any(grepl("Estimated additional events to DARIS (historical rate):",
+                        out, fixed = TRUE)))
+  expect_true(any(grepl("Estimated additional studies required:", out, fixed = TRUE)))
+  ## "DARIS (historical rate): ~N cumulative events" comes just before the
+  ## estimated-additional-events line
+  ## (anchored: the "Estimated additional events to DARIS (historical rate): ~"
+  ## line contains the same text further along, so an unanchored match hits both)
+  i_daris <- grep("^DARIS \\(historical rate\\): ~", out)
+  i_est   <- grep("Estimated additional events to DARIS (historical rate):", out, fixed = TRUE)
+  expect_length(i_daris, 1L)
+  expect_length(i_est, 1L)
+  expect_gt(i_est, i_daris)
+  expect_lte(i_est - i_daris, 2L)   # the line + its one-line rate detail
+  pr <- res$projection
+  expect_equal(pr$events_accrued, 700)
+  expect_equal(pr$target_events_historical_rate,
+               pr$events_accrued + pr$additional_events_estimated)
+  st <- res$summary_table
+  expect_true(any(grepl("Theoretical additional events to DARIS", st$Parameter, fixed = TRUE)))
+  expect_true(any(grepl("Estimated additional events to DARIS (historical rate",
+                        st$Parameter, fixed = TRUE)))
+  expect_true(any(grepl("DARIS (historical rate): cumulative events", st$Parameter, fixed = TRUE)))
+})
+
+test_that("info_per_event_basis switches between study-level and pooled ratios", {
+  se <- c(0.30, 0.40, 0.50, 0.60, 0.35, 0.45, 0.55)
+  et <- c(80, 60, 40, 30, 70, 50, 35)
+  ec <- c(85, 55, 45, 35, 65, 45, 30)
+  d  <- .proj_data(se = se, ev_t = et, ev_c = ec)
+  r_def  <- suppressWarnings(tsa_hr(d, target_HR = 0.80, verbose = FALSE))
+  r_pool <- suppressWarnings(tsa_hr(d, target_HR = 0.80, verbose = FALSE,
+                                    info_per_event_basis = "pooled"))
+  skip_if(isTRUE(r_def$results$daris_reached), "DARIS reached; nothing to project")
+
+  info <- 1 / se^2
+  ev   <- et + ec
+  ratio_median <- stats::median(info / ev)
+  ratio_pooled <- sum(info) / sum(ev)
+  short <- r_def$projection$additional_info_required
+
+  expect_equal(r_def$projection$info_per_event_basis, "per_study")
+  expect_equal(r_def$projection$central_info_per_event, ratio_median)
+  expect_equal(r_def$projection$additional_events_estimated, short / ratio_median)
+
+  expect_equal(r_pool$projection$info_per_event_basis, "pooled")
+  expect_equal(r_pool$projection$central_info_per_event, ratio_pooled)
+  expect_equal(r_pool$projection$additional_events_estimated, short / ratio_pooled)
+
+  ## both variants are always returned, whichever basis is chosen
+  for (r in list(r_def, r_pool)) {
+    expect_equal(r$projection$additional_events_study_level, short / ratio_median)
+    expect_equal(r$projection$additional_events_pooled, short / ratio_pooled)
+  }
+  ## the studies estimate does not depend on the basis
+  expect_equal(r_def$projection$n_additional_studies, r_pool$projection$n_additional_studies)
+
+  expect_error(suppressWarnings(tsa_hr(d, target_HR = 0.80, verbose = FALSE,
+                                       info_per_event_basis = "nope")))
+})
+
+test_that("zero-event studies are excluded from the events projection and reported", {
+  d <- .proj_data(ev_t = c(0, rep(50, 6)), ev_c = c(0, rep(50, 6)))
+  out <- tryCatch(
+    utils::capture.output(res <- suppressWarnings(tsa_hr(d, target_HR = 0.80, verbose = TRUE))),
+    error = function(e) NULL)
+  skip_if(is.null(out), "a zero-event first study is not accepted by tsa_hr()")
+  skip_if(isTRUE(res$results$daris_reached), "DARIS reached; nothing to project")
+  pr <- res$projection
+  expect_equal(pr$n_zero_event_studies, 1L)
+  expect_equal(pr$n_excluded_events_projection, 1L)
+  expect_equal(pr$central_info_per_event, 0.0625)
+  expect_true(is.finite(pr$n_additional_studies))  # still used for the studies estimate
+  expect_true(any(grepl("1 of 7 study with zero events was excluded", out, fixed = TRUE)))
+  st <- res$summary_table
+  expect_true(any(grepl("Studies excluded from the events projection", st$Parameter, fixed = TRUE)))
+
+  ## no exclusion -> no note
+  out0 <- utils::capture.output(res0 <- suppressWarnings(
+    tsa_hr(.proj_data(), target_HR = 0.80, verbose = TRUE)))
+  skip_if(isTRUE(res0$results$daris_reached), "DARIS reached; nothing to project")
+  expect_equal(res0$projection$n_excluded_events_projection, 0L)
+  expect_false(any(grepl("excluded from the information-per-event", out0, fixed = TRUE)))
+})
+
+test_that("plot(): design route draws the historical-rate DARIS line and caption lines", {
+  res <- suppressWarnings(tsa_hr(.proj_data(), target_HR = 0.80, verbose = FALSE))
+  skip_if(isTRUE(res$results$daris_reached), "DARIS reached; nothing to project")
+  p <- suppressMessages(plot(res))
+  labs <- vapply(p$layers, function(ly) {
+    l <- ly$aes_params$label
+    if (is.null(l)) NA_character_ else as.character(l)[1]
+  }, character(1))
+  skip_if(all(is.na(labs)), "could not read annotation labels in this ggplot2 build")
+  expect_true(any(grepl("^DARIS \\(historical rate\\)", labs)))
+
+  p_off <- suppressMessages(plot(res, show_historical_daris = FALSE))
+  labs_off <- vapply(p_off$layers, function(ly) {
+    l <- ly$aes_params$label
+    if (is.null(l)) NA_character_ else as.character(l)[1]
+  }, character(1))
+  expect_false(any(grepl("^DARIS \\(historical rate\\)", labs_off)))
+
+  cap <- tryCatch(ggplot2::get_labs(p)$caption, error = function(e) p$labels$caption)
+  skip_if(is.null(cap), "could not read the caption in this ggplot2 build")
+  expect_match(cap, "Theoretical additional events to DARIS (Schoenfeld):", fixed = TRUE)
+  expect_match(cap, "Estimated additional events to DARIS (historical rate):", fixed = TRUE)
+  expect_match(cap, "Estimated additional studies required:", fixed = TRUE)
+})
+
+test_that("analysis route reports theoretical and historical-rate events for its endpoint", {
+  out <- tryCatch(
+    utils::capture.output(res <- suppressWarnings(
+      tsa_hr(.proj_data(), target_HR = 0.80, verbose = TRUE, boundary_route = "analysis"))),
+    error = function(e) NULL)
+  skip_if(is.null(out), "analysis route not available for this small dataset")
+  skip_if_not(identical(res$settings$route_used, "analysis"),
+              "analysis route fell back to the design route")
+  skip_if(isTRUE(res$results$final_reached), "analysis-route endpoint reached; nothing to project")
+
+  pr <- res$projection
+  expected_theo <- max(ceiling(res$information_size$DARIS_events *
+                                 res$settings$route_endpoint - pr$events_accrued), 0)
+  expect_equal(pr$additional_events_theoretical, expected_theo)
+  expect_equal(pr$target_events_historical_rate,
+               pr$events_accrued + pr$additional_events_estimated)
+  expect_true(any(grepl("Theoretical additional events to analysis-route endpoint (Schoenfeld):",
+                        out, fixed = TRUE)))
+  expect_true(any(grepl("Estimated additional events to analysis-route endpoint (historical rate):",
+                        out, fixed = TRUE)))
+  ## the projection line comes just before the estimated-additional-events line
+  i_proj <- grep("Historical information/event-rate projection = ~", out, fixed = TRUE)
+  i_est  <- grep("Estimated additional events to analysis-route endpoint (historical rate):",
+                 out, fixed = TRUE)
+  expect_length(i_proj, 1L)
+  expect_gt(i_est, i_proj)
+  expect_lte(i_est - i_proj, 2L)   # projection line + its one-line rate detail
+  expect_true(any(grepl("Estimated additional studies required:", out, fixed = TRUE)))
+  st <- res$summary_table
+  expect_true(any(grepl("Theoretical additional events to analysis-route endpoint",
+                        st$Parameter, fixed = TRUE)))
+  expect_true(any(grepl("Historical information/event-rate projection", st$Parameter, fixed = TRUE)))
+  expect_true(any(grepl("Estimated additional events to analysis-route endpoint (historical rate",
+                        st$Parameter, fixed = TRUE)))
+})
+
+test_that("design route: additional_events_theoretical equals the Schoenfeld design figure", {
+  res <- suppressWarnings(tsa_hr(.proj_data(), target_HR = 0.80, verbose = FALSE))
+  skip_if(isTRUE(res$results$daris_reached), "DARIS reached; nothing to project")
+  expect_equal(res$projection$additional_events_theoretical,
+               res$projection$additional_events_required_design)
+})
