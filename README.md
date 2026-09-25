@@ -76,6 +76,26 @@ With `boundary_route = "analysis"`, the position and size of the
 "Analysis-route endpoint ... reached" label can be set with
 `endpoint_label_x`, `endpoint_label_y` and `endpoint_label_size`.
 
+### Random-effects inference
+
+By default (`re_inference = "standard"`) the random-effects model uses the
+usual normal-theory inference. `re_inference = "hksj"` (alias `"knha"`)
+switches to the Hartung-Knapp-Sidik-Jonkman adjustment, and
+`re_inference = "Hksj_adhoc"` to its ad hoc variant in which the variance
+multiplier is never below 1:
+
+```r
+res <- tsa_hr(path, target_HR = 0.80, re_inference = "hksj")
+plot(res)   # the caption names the inference option
+```
+
+The tau² estimator (`method`), DARIS and the boundaries are unaffected; the
+pooled CI/p-value and the cumulative Z-curve (shown as the normal-equivalent
+of the HKSJ t statistic) change. The HKSJ statistic is undefined at the
+first look (`cumulative$Z` is `NA` there, and no point is drawn), and early
+looks generally are unstable (very few degrees of freedom) -- `tsa_hr()`
+prints a note about this under `verbose = TRUE`; see `?tsa_hr`.
+
 ### Using your own data
 
 `data` can be a data.frame or a path to an `.xlsx` file with one row per

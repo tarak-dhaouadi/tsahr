@@ -23,7 +23,11 @@
 plot. Default \code{TRUE}.}
 
 \item{caption}{Logical; show the methods caption below the plot. Default
-\code{TRUE}. When the route's own endpoint (DARIS for
+\code{TRUE}. When \code{tsa_hr()} was run with a non-standard
+\code{re_inference} (\code{"hksj"}/\code{"knha"} or \code{"Hksj_adhoc"}),
+the caption gains a line right under the first "Methods" line naming that
+inference option; it is absent for the default \code{"standard"}. When the
+route's own endpoint (DARIS for
 \code{boundary_route = "design"}; the analysis-route endpoint for
 \code{"analysis"}) has not yet been reached, the caption gains final
 lines with the projection: "Theoretical additional events to DARIS

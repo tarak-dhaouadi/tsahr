@@ -782,11 +782,13 @@ test_that("design route prints theoretical, historical-rate events and studies",
   expect_equal(pr$events_accrued, 700)
   expect_equal(pr$target_events_historical_rate,
                pr$events_accrued + pr$additional_events_estimated)
+  ## summary_table$Parameter uses the 0.2.8.12 abbreviations ("Add'l" for
+  ## Additional); see attr(st, "abbreviations")
   st <- res$summary_table
-  expect_true(any(grepl("Theoretical additional events to DARIS", st$Parameter, fixed = TRUE)))
-  expect_true(any(grepl("Estimated additional events to DARIS (historical rate",
+  expect_true(any(grepl("Add'l events to DARIS (Schoenfeld", st$Parameter, fixed = TRUE)))
+  expect_true(any(grepl("Add'l events to DARIS (hist. rate",
                         st$Parameter, fixed = TRUE)))
-  expect_true(any(grepl("DARIS (historical rate): cumulative events", st$Parameter, fixed = TRUE)))
+  expect_true(any(grepl("DARIS reached, hist. rate", st$Parameter, fixed = TRUE)))
 })
 
 test_that("info_per_event_basis switches between study-level and pooled ratios", {
@@ -840,7 +842,7 @@ test_that("zero-event studies are excluded from the events projection and report
   expect_true(is.finite(pr$n_additional_studies))  # still used for the studies estimate
   expect_true(any(grepl("1 of 7 study with zero events was excluded", out, fixed = TRUE)))
   st <- res$summary_table
-  expect_true(any(grepl("Studies excluded from the events projection", st$Parameter, fixed = TRUE)))
+  expect_true(any(grepl("Studies excluded from projection", st$Parameter, fixed = TRUE)))
 
   ## no exclusion -> no note
   out0 <- utils::capture.output(res0 <- suppressWarnings(
@@ -903,11 +905,13 @@ test_that("analysis route reports theoretical and historical-rate events for its
   expect_gt(i_est, i_proj)
   expect_lte(i_est - i_proj, 2L)   # projection line + its one-line rate detail
   expect_true(any(grepl("Estimated additional studies required:", out, fixed = TRUE)))
+  ## summary_table$Parameter uses the 0.2.8.12 abbreviations ("Add'l", "AR
+  ## endpoint"); see attr(st, "abbreviations")
   st <- res$summary_table
-  expect_true(any(grepl("Theoretical additional events to analysis-route endpoint",
+  expect_true(any(grepl("Add'l events to AR endpoint (Schoenfeld",
                         st$Parameter, fixed = TRUE)))
-  expect_true(any(grepl("Historical information/event-rate projection", st$Parameter, fixed = TRUE)))
-  expect_true(any(grepl("Estimated additional events to analysis-route endpoint (historical rate",
+  expect_true(any(grepl("AR endpoint reached, hist. rate", st$Parameter, fixed = TRUE)))
+  expect_true(any(grepl("Add'l events to AR endpoint (hist. rate",
                         st$Parameter, fixed = TRUE)))
 })
 

@@ -1,3 +1,164 @@
+# tsahr 0.2.8.17
+
+## HKSJ early-look caveat is now a warning(), matching the target_HR-near-1 caveat
+
+* Superseding 0.2.8.12-16: the HKSJ early-look caveat is no longer a block
+  of text printed by \code{tsa_hr(verbose = TRUE)}. It is now raised as a
+  plain \code{warning(..., call. = FALSE)} -- the exact same mechanism,
+  and so the exact same look/formatting (e.g. R's own "Warning message:"
+  / "Message d'avis :" header and default line-wrapping) as the existing
+  \code{target_HR}-near-the-null-value-of-1 caveat.
+* It now fires once per call whenever \code{re_inference} resolves to
+  \code{"hksj"}/\code{"hksj_adhoc"} (aliases \code{"knha"}/
+  \code{"knha_adhoc"}) and that inference is actually used -- i.e. after,
+  not before, the existing fallback-to-\code{"standard"} check for a
+  non-positive Hartung-Knapp scale factor -- regardless of
+  \code{verbose}. Previously it only appeared when \code{verbose = TRUE}.
+* The 0.2.8.16 grey-background console highlighting (and its helpers,
+  \code{.tsahr_color_enabled()}/\code{.tsahr_bg_note()} in
+  \code{rtsa_engine.R}) is removed along with the old boxed note; a plain
+  \code{warning()} needs no bespoke styling.
+* \code{test-re-inference-0.2.8.12.R} updated to check the warning (via
+  \code{expect_warning()}/\code{conditionMessage()}) instead of parsing
+  \code{capture.output()} text; \code{test-console-color-0.2.8.16.R}
+  removed. \code{?tsa_hr} updated to describe the warning instead of the
+  printed note.
+
+# tsahr 0.2.8.16
+
+## HKSJ early-look caveat: spaced out and highlighted
+
+* The `"*** NOTE (HKSJ INFERENCE): ..."` caveat printed by `tsa_hr(verbose
+  = TRUE)` under `re_inference = "hksj"`/`"hksj_adhoc"` is now separated
+  from the `"=== Trial sequential monitoring boundaries ..."` table above
+  it by a blank line (0.2.8.12/13 had deliberately printed it directly
+  after, with no blank line there -- see NEWS for those versions).
+* The note is now highlighted with a light grey terminal background (256-
+  colour ANSI code 253, black text) via the new internal helpers
+  `.tsahr_color_enabled()`/`.tsahr_bg_note()` (`rtsa_engine.R`). Colouring
+  is opt-in by detection: it only fires in a session that looks like an
+  interactive terminal or RStudio console with ANSI support, so captured
+  output (`R CMD check`, `testthat`, `Rscript`, `sink()`/
+  `utils::capture.output()`) stays plain text, matching prior behaviour.
+  `options(tsahr.color = TRUE)`/`options(tsahr.color = FALSE)` overrides
+  the auto-detection in either direction.
+* `test-re-inference-0.2.8.12.R` updated for the new blank-line placement;
+  a new `test-console-color-0.2.8.16.R` covers the colour-detection
+  override and confirms the default (colour off) output has no ANSI codes.
+
+# tsahr 0.2.8.15
+
+## Shortened a summary-table row label
+
+* The "analysis route" summary table had a row whose label ran off the
+  printed width: `"Add'l events to AR endpoint (hist. rate; median of the
+  study-level information per event)"` (and the analogous "design route"
+  DARIS row). Both now read `"Add'l events to DARIS (hist. rate; <basis>
+  IPE)"` / `"Add'l events to AR endpoint (hist. rate; <basis> IPE)"`,
+  where `<basis>` is `"pooled"` or the `projection_stat` statistic (e.g.
+  `"median"`), matching the style of the neighbouring
+  `"...(<basis>-based proj.)"` row. The new abbreviation `"IPE"`
+  ("information per event") is added to the `"Abbreviations"` legend
+  returned as `attr(summary_table, "abbreviations")` and printed by
+  `summary.tsa_hr()`. The full-sentence description (e.g. `"pooled ratio:
+  total information / total events"`) still appears in the prose
+  `projection_note`; only the summary-table row label was shortened.
+
+# tsahr 0.2.8.14
+
+## Test fix only (no code changes)
+
+* Fixed a typo in `test-re-inference-0.2.8.12.R` (`R CMD check --as-cran`
+  failure on 0.2.8.13): the test checked for the substring
+  `"not interpreted as directly comparable"`, but the actual, correct
+  printed HKSJ caveat says `"not be interpreted as directly comparable"`
+  (see `?tsa_hr` and NEWS.md for 0.2.8.12) -- the test was missing "be".
+  No R/ code changed in this release.
+
+# tsahr 0.2.8.13
+
+## Fixes to the 0.2.8.12 HKSJ-caveat placement and plotted Z-curve
+
+* The HKSJ early-look caveat now prints with **no blank line** between the
+  `=== Trial sequential monitoring boundaries (alpha/beta spending) ===`
+  table and the note itself (0.2.8.12 had a blank line there); a single
+  blank line still follows the note (or the table, when the note is not
+  shown), as before.
+* The plotted Z-curve's point and line layers are now built from data that
+  has the `NA` first-look `Z` (under `"hksj"`/`"Hksj_adhoc"`; see 0.2.8.12)
+  removed explicitly, rather than relying only on the layers' own
+  `na.rm = TRUE`. This fixes an `R CMD check --as-cran` test failure where
+  the built plot still contained a point for the `NA` look on some
+  ggplot2/R combinations.
+
+# tsahr 0.2.8.12
+
+## HKSJ early-look caveat, NA'd first-look Z, and a readable summary table
+
+* **Printed HKSJ caveat.** With `verbose = TRUE` and a non-standard
+  `re_inference` (`"hksj"`/`"knha"` or `"Hksj_adhoc"`), a highlighted note is
+  now printed directly after the `=== Trial sequential monitoring boundaries
+  (alpha/beta spending) ===` table:
+
+  > HKSJ inference can be unstable at early cumulative looks because the
+  > degrees of freedom are k-1. In particular, the HKSJ statistic is
+  > undefined at k=1 ("NA" at first look) and is based on only one degree of
+  > freedom at k=2. Early cumulative HKSJ values should therefore not be
+  > interpreted as directly comparable in magnitude with conventional normal
+  > Z-statistics.
+
+  The same caveat is now in `?tsa_hr` ("Random-effects inference" under
+  Details).
+* **`cumulative$Z` is `NA` at the first look** for `"hksj"`/`"Hksj_adhoc"`
+  (the HKSJ statistic is undefined at k = 1; a t distribution on 0 df has no
+  defined quantile). This shows as `NA` in both printed cumulative tables
+  and is simply not drawn on the plotted Z-curve (the point is skipped, the
+  line does not break elsewhere); `cumulative$se`/`$pval`/etc. at that look
+  are unaffected, only `Z` is withheld. `results$crossed_conventional` is
+  now computed with `na.rm = TRUE` so a first-look `NA` cannot propagate
+  into it.
+* **Readable summary table.** `summary_table$Parameter` now uses short
+  abbreviations (e.g. `"DARIS"`, `"AR endpoint"` for analysis-route
+  endpoint, `"RE"` for random effects, `"psi"`, `"hist. rate"`, `"Add'l"`)
+  instead of the long descriptive labels of earlier versions, so the table
+  no longer wraps illegibly at typical console widths. The expansions are
+  returned as a named character vector in
+  `attr(summary_table, "abbreviations")` and `summary()` now prints an
+  `Abbreviations: ...` line directly beneath the table. `print()` is
+  unaffected (it already used short, separate lines). See `?tsa_hr`, "Value".
+
+# tsahr 0.2.8.11
+
+## New argument `re_inference`: standard, HKSJ and ad hoc HKSJ inference
+
+* **`tsa_hr(re_inference = )`** (new, last argument, so positional calls are
+  unaffected). `"standard"` (default) is the behaviour of all earlier
+  versions and gives identical results. `"hksj"` (alias `"knha"`) applies the
+  Hartung-Knapp-Sidik-Jonkman adjustment (variance multiplied by q, t
+  distribution with k - 1 df); `"Hksj_adhoc"` (alias `"knha_adhoc"`) uses
+  max(1, q) so the standard error is never smaller than the standard one.
+  Matching is case-insensitive; anything else is an error.
+* **What changes.** The SE, p-value and 95% CI of the pooled HR and of every
+  cumulative look. The cumulative `Z` is the normal-equivalent of the HKSJ t
+  statistic (same two-sided p-value), so the boundaries and the conventional
+  boundary keep their meaning; the raw t statistic is in `cumulative$zval`,
+  and non-standard options add `cumulative$re_df` and `cumulative$re_scale`.
+  The first look (one study) and looks with a zero/non-finite scale factor
+  keep the z-based values.
+* **What does not change.** The tau^2 estimator (`method`), pooled point
+  estimate, tau^2, I^2, Q, Diversity D^2, DARIS, information fractions and
+  therefore the alpha/beta boundaries. D^2 is deliberately computed from the
+  standard random-effects variance, not the HKSJ-scaled one.
+* **Plot caption, `print()`, `summary()`.** With a non-standard option the
+  caption gets a line "Random-effects inference: ..." under the first
+  "Methods" line; `print()` prints the option and `summary()` gains a
+  "Random-effects inference" row. Nothing is added for `"standard"`.
+* `parameters$re_inference` (normalised) and `parameters$re_inference_requested`
+  are returned. If the HKSJ scale factor of the full data is zero or not
+  finite, `tsa_hr()` warns and falls back to `"standard"`.
+* Documentation: `?tsa_hr` (argument, Details, Value) and `?plot.tsa_hr`
+  updated; new tests in `test-re-inference-0.2.8.11.R`.
+
 # tsahr 0.2.8.10
 
 ## Release hygiene: NAMESPACE, roxygen tags, and a stricter zero-event test

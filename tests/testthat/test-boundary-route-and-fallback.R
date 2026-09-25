@@ -90,9 +90,12 @@ test_that("0.2.7.14: DARIS and the analysis-route endpoint are reported separate
 
   ## labelling: the summary table names the endpoint only for the analysis
   ## route; the design route keeps the DARIS-only table
-  expect_true(any(grepl("analysis-route endpoint", res_a$summary_table$Parameter,
+  ## summary_table$Parameter uses the "AR endpoint" abbreviation (0.2.8.12;
+  ## see attr(summary_table, "abbreviations")), unlike the verbose console
+  ## output below, which spells out "analysis-route endpoint" in full
+  expect_true(any(grepl("AR endpoint", res_a$summary_table$Parameter,
                         fixed = TRUE)))
-  expect_false(any(grepl("analysis-route endpoint", res_d$summary_table$Parameter,
+  expect_false(any(grepl("AR endpoint", res_d$summary_table$Parameter,
                          fixed = TRUE)))
 
   ## printed output: the analysis route never calls its endpoint "DARIS"
@@ -177,7 +180,7 @@ test_that("tsa_hr() definitive-look fields: reached, crossing, non-crossing, not
   expect_true(is.na(res_u$results$final_non_efficacy))
   expect_true(is.na(res_u$results$final_entered_futility_region))
 
-  expect_true(any(grepl("did not cross efficacy", res$summary_table$Parameter,
+  expect_true(any(grepl("non-efficacy", res$summary_table$Parameter,
                         fixed = TRUE)))
   expect_true(any(grepl("Definitive look crossed efficacy", res$summary_table$Parameter,
                         fixed = TRUE)))
@@ -259,7 +262,7 @@ test_that("analysis-route failure: falls back to the DESIGN route (flagged); FAL
   expect_equal(res$settings$route_endpoint, 1)
   expect_equal(res$boundary_timeline, res_design$boundary_timeline)
   ## the endpoint is labelled DARIS again, since that is what it now is
-  expect_false(any(grepl("analysis-route endpoint", res$summary_table$Parameter,
+  expect_false(any(grepl("AR endpoint", res$summary_table$Parameter,
                          fixed = TRUE)))
   expect_output(print(res), "DESIGN-route")
 

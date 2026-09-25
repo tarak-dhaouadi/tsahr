@@ -26,6 +26,129 @@
   if (method %in% names(labels)) labels[[method]] else paste0("'", method, "'")
 }
 
+## Internal helpers for the random-effects inference option (0.2.8.11).
+## Not exported.
+
+## Human-readable label for a (canonical) re_inference value.
+.tsahr_re_inference_label <- function(re_inference) {
+  labels <- c(
+    standard   = "standard (Wald-type z test)",
+    hksj       = "Hartung-Knapp-Sidik-Jonkman (HKSJ)",
+    hksj_adhoc = "HKSJ with ad hoc variance correction"
+  )
+  if (re_inference %in% names(labels)) labels[[re_inference]] else paste0("'", re_inference, "'")
+}
+
+## Validate/normalise `re_inference`. Case-insensitive; "knha" is an alias
+## for "hksj" and "knha_adhoc" for "hksj_adhoc". Returns the canonical value
+## (one of "standard", "hksj", "hksj_adhoc").
+.tsahr_normalise_re_inference <- function(re_inference) {
+  map <- c(standard   = "standard",
+           hksj       = "hksj",
+           knha       = "hksj",
+           hksj_adhoc = "hksj_adhoc",
+           knha_adhoc = "hksj_adhoc")
+  msg <- paste0("re_inference must be one of: \"standard\", \"hksj\" (alias \"knha\"), ",
+                "\"hksj_adhoc\" (alias \"knha_adhoc\"); matching is case-insensitive.")
+  if (!is.character(re_inference) || length(re_inference) != 1L ||
+      is.na(re_inference)) {
+    stop(msg, call. = FALSE)
+  }
+  key <- tolower(trimws(re_inference))
+  if (!(key %in% names(map))) stop(msg, call. = FALSE)
+  unname(map[[key]])
+}
+
+## Hartung-Knapp-Sidik-Jonkman scale factor q for a random-effects fit with
+## given tau^2: q = sum(w_i (y_i - mu)^2) / (k - 1), w_i = 1/(sei_i^2 + tau2)
+## and mu the corresponding weighted mean. This is the multiplier that the
+## HKSJ adjustment applies to the usual variance of the pooled estimate
+## (identical to what metafor::rma(test = "knha") uses). NA for k < 2.
+.tsahr_hksj_q <- function(yi, sei, tau2) {
+  k <- length(yi)
+  if (k < 2L || !is.finite(tau2)) return(NA_real_)
+  w  <- 1 / (sei^2 + tau2)
+  mu <- sum(w * yi) / sum(w)
+  sum(w * (yi - mu)^2) / (k - 1)
+}
+
+## Re-do the inference of the cumulative (sequential) random-effects table
+## under HKSJ (0.2.8.11). `cumul_df` is the data frame from
+## metafor::cumul() of the STANDARD random-effects fit, so the cumulative
+## point estimates and tau^2 values are untouched; only the standard error,
+## test statistic, p-value and 95% CI are replaced, look by look, by their
+## HKSJ counterparts (t distribution with k - 1 df, variance multiplied by q
+## for "hksj" or by max(1, q) for "hksj_adhoc"). The Z column is the
+## NORMAL-EQUIVALENT of the resulting t statistic -- sign(estimate) times the
+## normal quantile with the same (two-sided) p-value -- so that the Z-curve
+## stays on the scale the monitoring boundaries and the conventional
+## boundary (qnorm(1 - alpha/2)) are defined on. Looks at which HKSJ is not
+## defined (the first look, k = 1; or a non-positive/non-finite scale
+## factor) keep the standard z-based values (re_df = Inf, re_scale = 1).
+.tsahr_cumulative_re_inference <- function(cumul_df, yi, sei, re_inference, method) {
+  k_tot   <- length(yi)
+  z_eq    <- cumul_df$estimate / cumul_df$se
+  scale_v <- rep(1, k_tot)
+  df_v    <- rep(Inf, k_tot)
+  se_v    <- cumul_df$se
+  stat_v  <- z_eq
+  p_v     <- cumul_df$pval
+  lb_v    <- cumul_df$ci.lb
+  ub_v    <- cumul_df$ci.ub
+
+  for (i in seq_len(k_tot)) {
+    if (i < 2L) next
+    idx <- seq_len(i)
+    tau2_i <- if ("tau2" %in% names(cumul_df)) cumul_df$tau2[i] else NA_real_
+    if (!is.finite(tau2_i)) {
+      tau2_i <- tryCatch(
+        metafor::rma(yi = yi[idx], sei = sei[idx], method = method)$tau2,
+        error = function(e) NA_real_)
+    }
+    q <- .tsahr_hksj_q(yi[idx], sei[idx], tau2_i)
+    if (!is.finite(q) || q <= 0) next
+    scale_i <- if (identical(re_inference, "hksj_adhoc")) max(1, q) else q
+    w    <- 1 / (sei[idx]^2 + tau2_i)
+    est  <- cumul_df$estimate[i]
+    se_i <- sqrt(scale_i / sum(w))
+    df_i <- i - 1
+    t_i  <- est / se_i
+    ## log-scale upper-tail probability keeps the normal-equivalent accurate
+    ## even for very small p-values
+    lp1  <- stats::pt(abs(t_i), df = df_i, lower.tail = FALSE, log.p = TRUE)
+    crit <- stats::qt(0.975, df = df_i)
+
+    scale_v[i] <- scale_i
+    df_v[i]    <- df_i
+    se_v[i]    <- se_i
+    stat_v[i]  <- t_i
+    p_v[i]     <- min(1, 2 * exp(lp1))
+    lb_v[i]    <- est - crit * se_i
+    ub_v[i]    <- est + crit * se_i
+    z_eq[i]    <- sign(est) * (-stats::qnorm(lp1, log.p = TRUE))
+  }
+
+  ## 0.2.8.12: the HKSJ statistic is undefined at k = 1 (a t distribution
+  ## with 0 df has no defined quantile), so the first look's Z is reported
+  ## as NA rather than silently falling back to the z-based value -- both
+  ## in the printed cumulative tables (which show this column directly)
+  ## and in the plotted Z-curve (a single NA point/segment is simply not
+  ## drawn; see plot.tsa_hr()). This is deliberate under every non-standard
+  ## re_inference option, so it is set unconditionally here (this function
+  ## is only ever called for "hksj"/"hksj_adhoc"; see tsa_hr()).
+  z_eq[1] <- NA_real_
+
+  cumul_df$se       <- se_v
+  cumul_df$zval     <- stat_v
+  cumul_df$pval     <- p_v
+  cumul_df$ci.lb    <- lb_v
+  cumul_df$ci.ub    <- ub_v
+  cumul_df$re_scale <- scale_v
+  cumul_df$re_df    <- df_v
+  cumul_df$Z        <- z_eq
+  cumul_df
+}
+
 #' Trial Sequential Analysis for a meta-analysis of Hazard Ratios
 #'
 #' Performs a Trial Sequential Analysis (TSA) for a meta-analysis of
@@ -173,6 +296,35 @@
 #'   result will be reported as RTSA-equivalent and an unnoticed fallback
 #'   would be worse than a hard stop.
 #'
+#' @param re_inference Character string selecting how inference on the
+#'   pooled \emph{random-effects} effect, and on every cumulative look, is
+#'   carried out; matching is case-insensitive. The heterogeneity-variance
+#'   estimator (\code{method}) and the pooled point estimate are the same
+#'   under every option -- only the standard error, test statistic,
+#'   p-value and 95\% CI change. One of:
+#'   \describe{
+#'     \item{\code{"standard"}}{(default; exactly the behaviour of earlier
+#'       tsahr versions) the usual Wald-type inference: standard normal
+#'       reference distribution, variance \code{1 / sum(w)} with random-effects
+#'       weights \code{w = 1 / (Std_Error^2 + tau^2)}.}
+#'     \item{\code{"hksj"} (alias \code{"knha"})}{Hartung-Knapp-Sidik-Jonkman
+#'       (Knapp-Hartung) adjustment: the variance is multiplied by
+#'       \code{q = sum(w * (log_HR - pooled)^2) / (k - 1)} and the test and
+#'       CI use a t distribution with \code{k - 1} degrees of freedom
+#'       (\code{metafor::rma(test = "knha")}). \code{q} may be below 1, in
+#'       which case the adjusted CI can be \emph{narrower} than the standard
+#'       one.}
+#'     \item{\code{"Hksj_adhoc"} (alias \code{"knha_adhoc"})}{HKSJ with the
+#'       ad hoc correction that \code{q} is never allowed to be below 1: the
+#'       variance is multiplied by \code{max(1, q)} (t distribution,
+#'       \code{k - 1} df), so the standard error is never smaller than under
+#'       \code{"standard"}. Also known as the modified/truncated HKSJ
+#'       method.}
+#'   }
+#'   See \dQuote{Random-effects inference} under Details for how the option
+#'   enters the cumulative Z-curve and what it does \emph{not} change. When
+#'   a non-standard option is used, the plot caption states it.
+#'
 #' @details
 #' **Circularity caution:** using the observed pooled effect
 #' (\code{target_HR = NA}) to determine the required information size is
@@ -193,6 +345,67 @@
 #' model; the displayed monitoring boundaries should therefore be
 #' regarded as an approximation (as in the official Copenhagen Trial
 #' Unit TSA software), not an exact result.
+#'
+#' \strong{Random-effects inference (\code{re_inference}, 0.2.8.11).}
+#' \code{re_inference} changes how the \emph{random-effects} pooled effect and
+#' each cumulative look are tested, not how heterogeneity is estimated:
+#' \code{method} still chooses the tau^2 estimator, and the pooled point
+#' estimate (log-HR) and tau^2 at every look are identical under all three
+#' options. For \code{"hksj"} and \code{"Hksj_adhoc"} the standard error,
+#' p-value and 95\% CI of the pooled HR (\code{res_re}, printed output,
+#' summary table and plot subtitle) and of every row of \code{cumulative} are
+#' the HKSJ ones, computed look by look from the studies accrued so far.
+#' \itemize{
+#'   \item \strong{Z-curve scale.} The monitoring boundaries and the
+#'     conventional boundary are defined on the standard normal scale, whereas
+#'     an HKSJ statistic follows a t distribution with \code{k - 1} df at
+#'     look \code{k}. The cumulative \code{Z} is therefore the
+#'     \emph{normal-equivalent} of the HKSJ t statistic: the value with the
+#'     same two-sided p-value on the normal scale (\code{sign(estimate) *
+#'     qnorm(1 - p / 2)}). Consequently \code{|Z| >= qnorm(1 - alpha/2)}
+#'     exactly when the HKSJ p-value is below alpha, and the conventional
+#'     (naive) boundary keeps its usual meaning. The raw t statistic is kept
+#'     in \code{cumulative$zval}, the degrees of freedom in
+#'     \code{cumulative$re_df} and the variance multiplier in
+#'     \code{cumulative$re_scale} (these two columns exist only for
+#'     non-standard options). The t distribution is not what the alpha
+#'     spending boundaries were derived for, so this is a further
+#'     approximation on top of the one described under \dQuote{Random-effects
+#'     caveat}.
+#'   \item \strong{Early looks.} HKSJ needs at least two studies: the HKSJ
+#'     statistic is undefined at \code{k = 1} (a t distribution on 0 df has
+#'     no defined quantile), so \code{cumulative$Z} is \code{NA} at the
+#'     first look for \code{"hksj"}/\code{"Hksj_adhoc"} -- shown as
+#'     \code{NA} in the printed cumulative tables and simply not drawn on
+#'     the plotted Z-curve (\code{cumulative$se}, \code{$pval} etc. still
+#'     hold the standard, z-based values at that look; only \code{Z} is
+#'     withheld). A look at which the scale factor is zero or not finite
+#'     (e.g. all estimates identical) likewise keeps the standard z-based
+#'     \code{Z}; both cases have \code{re_df = Inf} and \code{re_scale = 1}.
+#'     At the second look \code{k - 1 = 1} degree of freedom, so early HKSJ
+#'     looks (however defined) are very conservative and erratic; a
+#'     \code{warning()} says so (with \code{call. = FALSE}, the same way as
+#'     the \code{target_HR}-near-1 caveat below) whenever a non-standard
+#'     \code{re_inference} is actually used, regardless of \code{verbose}.
+#'     Early cumulative HKSJ values
+#'     should not be interpreted as directly comparable in magnitude with
+#'     conventional normal Z-statistics.
+#'   \item \strong{What is not changed.} The Diversity D^2, the adjustment
+#'     factor, DARIS, the information fractions and hence the alpha/beta
+#'     boundaries are always computed from the standard random-effects and
+#'     equal-effects variances and do not depend on \code{re_inference}, as
+#'     do I^2, tau^2 and Q. Only the Z-curve (and the decisions that compare
+#'     it with the boundaries) and the reported pooled inference change.
+#'     With \code{target_HR = NA} the anticipated HR is the pooled point
+#'     estimate, which is also unaffected.
+#'   \item \strong{Degenerate data.} If the HKSJ scale factor of the full
+#'     data set is zero or not finite, \code{tsa_hr()} warns and falls back
+#'     to \code{"standard"}; \code{parameters$re_inference} then reads
+#'     \code{"standard"} while \code{parameters$re_inference_requested}
+#'     keeps what was asked for.
+#' }
+#' The plot caption names the option whenever it is not \code{"standard"};
+#' \code{print()} and \code{summary()} do the same.
 #'
 #' **Retrospective boundary timeline:** the observed cumulative Z-curve
 #' continues through every included study, but the formal alpha and beta
@@ -489,6 +702,22 @@
 #'   logical rows print as TRUE/FALSE/NA rather than 1/0/NA). Use
 #'   \code{plot()}, \code{summary()}, or \code{print()} on the result.
 #'
+#'   \code{parameters} records \code{re_inference} (the normalised option
+#'   actually used: \code{"standard"}, \code{"hksj"} or \code{"hksj_adhoc"})
+#'   and \code{re_inference_requested} (what the caller passed). With a
+#'   non-standard option, \code{res_re} is the corresponding
+#'   \code{metafor::rma} fit, \code{cumulative} gains the columns
+#'   \code{re_scale} and \code{re_df}, and the summary table gains a
+#'   \dQuote{Random-effects inference} row; \code{cumulative$Z} is
+#'   \code{NA} at the first look (see \dQuote{Random-effects inference}
+#'   under Details).
+#'
+#'   The summary table's \code{Parameter} column (0.2.8.12) uses short
+#'   abbreviations (e.g. \code{"DARIS"}, \code{"AR endpoint"}, \code{"RE"})
+#'   to stay readable; the expansions are returned as a named character
+#'   vector in \code{attr(summary_table, "abbreviations")} and are printed
+#'   by \code{summary()} underneath the table.
+#'
 #' @references
 #' Miladinovic B, Mhaskar R, Hozo I, Kumar A, Mahony H, Djulbegovic B.
 #' "Optimal information size in trial sequential analysis of time-to-event
@@ -521,7 +750,8 @@ tsa_hr <- function(data,
                     boundary_route = c("design", "analysis"),
                     legacy_fallback = TRUE,
                     projection_stat = c("median", "mean"),
-                    info_per_event_basis = c("per_study", "pooled")) {
+                    info_per_event_basis = c("per_study", "pooled"),
+                    re_inference = "standard") {
 
   allocation_source <- match.arg(allocation_source)
   boundary_route <- match.arg(boundary_route)
@@ -602,6 +832,14 @@ tsa_hr <- function(data,
          "by metafor::rma() that work without additional arguments this ",
          "package does not currently collect; see ?tsa_hr).")
   }
+
+  ## --- Random-effects inference (0.2.8.11) ------------------------------
+  ## "standard" (default; the behaviour of every earlier version), "hksj"
+  ## (alias "knha") or "hksj_adhoc" (alias "knha_adhoc"); case-insensitive.
+  ## Validated up front, like `method`. The user's own string is kept in
+  ## `re_inference_requested`; `re_inference` holds the canonical value.
+  re_inference_requested <- re_inference
+  re_inference <- .tsahr_normalise_re_inference(re_inference)
 
   ## --- Scalar design-parameter validation -----------------------------
   ## Checked before touching data at all: without this, e.g.
@@ -825,12 +1063,66 @@ tsa_hr <- function(data,
   ## -----------------------------------------------------------------
   ## 2. Conventional (overall) meta-analysis
   ## -----------------------------------------------------------------
-  res_re <- metafor::rma(yi = log_HR, sei = Std_Error, data = data, method = method)
-  res_fe <- metafor::rma(yi = log_HR, sei = Std_Error, data = data, method = "FE")
+  ## `res_std` is the STANDARD random-effects fit (z-based inference; exactly
+  ## the model earlier versions called `res_re`). It always exists because
+  ## the Diversity D^2 / DARIS / boundary calculations, I^2, tau^2 and Q are
+  ## defined on it and must not depend on `re_inference` (the HKSJ
+  ## adjustment rescales the variance of the pooled estimate, which would
+  ## otherwise leak into D^2 = (Var_random - Var_fixed) / Var_random).
+  res_std <- metafor::rma(yi = log_HR, sei = Std_Error, data = data, method = method)
+  res_fe  <- metafor::rma(yi = log_HR, sei = Std_Error, data = data, method = "FE")
+
+  ## 0.2.8.11: `res_re`, the model reported back (pooled HR, CI, p-value),
+  ## carries the requested inference. Same tau^2 estimator and point estimate;
+  ## only se/vb/test/CI differ. "hksj" -> metafor's test = "knha". "hksj_adhoc"
+  ## -> the HKSJ variance multiplier is max(1, q): for q >= 1 that is exactly
+  ## test = "knha"; for q < 1 it is the unscaled variance with a t reference
+  ## distribution, i.e. test = "t". Both are chosen here from q, computed
+  ## from the standard fit's tau^2, so no metafor-version-specific test
+  ## string is needed for the ad hoc variant.
+  if (identical(re_inference, "standard")) {
+    res_re <- res_std
+  } else {
+    q_pooled <- .tsahr_hksj_q(data$log_HR, data$Std_Error, res_std$tau2)
+    if (!is.finite(q_pooled) || q_pooled <= 0) {
+      warning("re_inference = \"", re_inference_requested, "\" needs a positive, ",
+              "finite Hartung-Knapp scale factor, but it is ",
+              format(q_pooled), " for these data (e.g. identical study estimates); ",
+              "falling back to re_inference = \"standard\".", call. = FALSE)
+      re_inference <- "standard"
+      res_re <- res_std
+    } else {
+      test_arg <- if (identical(re_inference, "hksj_adhoc") && q_pooled < 1) "t" else "knha"
+      res_re <- metafor::rma(yi = log_HR, sei = Std_Error, data = data,
+                             method = method, test = test_arg)
+    }
+  }
+  ## 0.2.8.17: early-look caveat for HKSJ, raised as a plain warning() --
+  ## same mechanism and look as the target_HR-near-1 warning above, rather
+  ## than the boxed note previously printed by verbose = TRUE (0.2.8.12-16;
+  ## see NEWS.md). Placed after the fallback-to-"standard" check just above
+  ## so it fires only when HKSJ/HKSJ_adhoc inference is actually used (not
+  ## when a non-positive Hartung-Knapp scale factor forced a fallback), and
+  ## regardless of `verbose`.
+  if (re_inference %in% c("hksj", "hksj_adhoc")) {
+    warning("HKSJ inference (re_inference = \"", re_inference_requested,
+            "\") can be unstable at early cumulative looks because the ",
+            "degrees of freedom are k-1: the HKSJ statistic is undefined ",
+            "at k=1 (\"NA\" at the first look) and is based on only one ",
+            "degree of freedom at k=2. Early cumulative HKSJ values should ",
+            "not be interpreted as directly comparable in magnitude with ",
+            "conventional normal Z-statistics.", call. = FALSE)
+  }
 
   if (verbose) {
-    cat(sprintf("=== Random-effects (%s) meta-analysis ===\n",
-                .tsahr_method_label(method)))
+    if (identical(re_inference, "standard")) {
+      cat(sprintf("=== Random-effects (%s) meta-analysis ===\n",
+                  .tsahr_method_label(method)))
+    } else {
+      cat(sprintf("=== Random-effects (%s) meta-analysis; inference: %s ===\n",
+                  .tsahr_method_label(method),
+                  .tsahr_re_inference_label(re_inference)))
+    }
     print(res_re)
     cat(sprintf("\nPooled HR (random effects): %.3f  95%% CI: %.3f-%.3f\n\n",
                 exp(res_re$b), exp(res_re$ci.lb), exp(res_re$ci.ub)))
@@ -841,11 +1133,14 @@ tsa_hr <- function(data,
   ##    Wetterslev J, Thorlund K, Brok J, Gluud C. BMC Med Res Methodol.
   ##    2009;9:86. D^2 = (Var_random - Var_fixed) / Var_random.
   ## -----------------------------------------------------------------
-  Q    <- res_re$QE
-  df   <- res_re$k - 1
-  I2   <- res_re$I2
-  tau2 <- res_re$tau2
-  var_random <- res_re$vb[1, 1]
+  ## Taken from the STANDARD fit (res_std) so that they do not depend on
+  ## `re_inference` (see the comment where res_std is fitted); for
+  ## re_inference = "standard" res_std and res_re are the same object.
+  Q    <- res_std$QE
+  df   <- res_std$k - 1
+  I2   <- res_std$I2
+  tau2 <- res_std$tau2
+  var_random <- res_std$vb[1, 1]
   var_fixed  <- res_fe$vb[1, 1]
 
   D2_raw <- max(0, (var_random - var_fixed) / var_random)
@@ -883,7 +1178,7 @@ tsa_hr <- function(data,
   AF <- 1 / (1 - D2)
 
   vcat("=== Heterogeneity ===\n")
-  vcat(sprintf("Q = %.2f (df = %d), p = %.4f\n", Q, df, res_re$QEp))
+  vcat(sprintf("Q = %.2f (df = %d), p = %.4f\n", Q, df, res_std$QEp))
   vcat(sprintf("I^2 = %.1f%%   tau^2 = %.4f\n", I2, tau2))
   vcat(sprintf("Diversity D^2 = %.1f%%   Adjustment factor (1/(1-D2)) = %.3f\n\n", D2 * 100, AF))
 
@@ -987,13 +1282,25 @@ tsa_hr <- function(data,
   ## -----------------------------------------------------------------
   ## 6. Cumulative (sequential) meta-analysis
   ## -----------------------------------------------------------------
-  cumul_re <- metafor::cumul(res_re, order = seq_len(nrow(data)))
+  ## The cumulative point estimates and tau^2 come from the STANDARD fit;
+  ## for re_inference != "standard" the look-by-look inference is then
+  ## replaced by its HKSJ counterpart (see .tsahr_cumulative_re_inference()).
+  cumul_re <- metafor::cumul(res_std, order = seq_len(nrow(data)))
   cumul_df <- as.data.frame(cumul_re)
 
   cumul_df$Study      <- data$Study
   cumul_df$cum_events <- cumsum(data$total_events)
   cumul_df$cum_n      <- cumsum(data$total_n)
-  cumul_df$Z          <- cumul_df$estimate / cumul_df$se
+  if (identical(re_inference, "standard")) {
+    cumul_df$Z        <- cumul_df$estimate / cumul_df$se
+  } else {
+    ## sets se/zval/pval/ci.lb/ci.ub, re_scale, re_df and Z (the
+    ## normal-equivalent of the HKSJ t statistic; see ?tsa_hr)
+    cumul_df <- .tsahr_cumulative_re_inference(cumul_df, yi = data$log_HR,
+                                               sei = data$Std_Error,
+                                               re_inference = re_inference,
+                                               method = method)
+  }
 
   ## info_accrued: cumulative STUDY-LEVEL inverse-variance information,
   ## i.e. sum(1/Std_Error^2) as reported by each individual study. This is
@@ -1402,7 +1709,10 @@ tsa_hr <- function(data,
   ## `any(abs(cumul_df$Z[decision_idx]) >= z_alpha, na.rm = TRUE)`
   ## instead. Decide explicitly before changing this -- both readings
   ## are defensible, but they answer different questions.
-  crossed_conventional <- any(abs(cumul_df$Z) >= z_alpha)
+  ## 0.2.8.12: na.rm = TRUE guards against cumul_df$Z[1] == NA at k = 1
+  ## under HKSJ inference (see .tsahr_cumulative_re_inference()); with a
+  ## single look otherwise NA, any(NA) would propagate to NA here.
+  crossed_conventional <- any(abs(cumul_df$Z) >= z_alpha, na.rm = TRUE)
   ## `entered_futility_region` uses the same decision_idx / definitive
   ## t=1-boundary comparison as crossed_tsa (see comment above
   ## decision_idx). At the first DARIS-reaching look specifically, this
@@ -1506,6 +1816,15 @@ tsa_hr <- function(data,
     "pooled ratio: total information / total events"
   } else {
     sprintf("%s of the study-level information per event", projection_stat)
+  }
+  ## 0.2.8.14: short form of the same basis, for the summary-table row
+  ## labels (info_per_event_basis_label above stays full-length for the
+  ## prose in projection_note); "IPE" is spelled out in the abbreviations
+  ## legend attached to summary_df below.
+  info_per_event_basis_short <- if (identical(info_per_event_basis, "pooled")) {
+    "pooled"
+  } else {
+    projection_stat
   }
   exclusion_note <- if (n_excluded_events_projection == 0L) {
     NULL
@@ -1784,18 +2103,24 @@ tsa_hr <- function(data,
   ## ** 0.2.7.14: ** decision rows distinguish "at ANY formal look" from "at
   ## the DEFINITIVE look" (see the decision-fields comment above); the
   ## analysis-route endpoint row is added only when that route actually ran.
-  sum_par <- c("Pooled HR (random effects, observed)", "95% CI lower", "95% CI upper",
-               "Anticipated HR (used for RIS calculation)",
+  ## 0.2.8.12: Parameter labels are kept short (abbreviations expanded once
+  ## in the "Abbreviations" legend returned as attr(summary_table,
+  ## "abbreviations"), printed by summary.tsa_hr(), and in ?tsa_hr, Value)
+  ## so the two-column table stays readable instead of wrapping (see the
+  ## former labels, e.g. "Diversity-Adjusted Required Information (DARIS,
+  ## information units)", in NEWS.md for 0.2.8.12).
+  sum_par <- c("Pooled HR (RE, observed)", "95% CI lower", "95% CI upper",
+               "Anticipated HR (for RIS)",
                "I2 (%)", "tau2", "Diversity D2 (%)", "Adjustment factor",
-               "Allocation psi (proportion in treatment arm)",
-               "Required statistical information (allocation-free)",
-               "Required Information Size in events (RIS, under pooled psi)",
-               "Diversity-Adjusted Required Information (DARIS, information units)",
-               "Theoretical DARIS event-equivalent (Schoenfeld-based, under pooled psi)",
+               "Allocation psi (treatment-arm prop.)",
+               "Required info (allocation-free)",
+               "RIS, events (pooled psi)",
+               "DARIS (info units)",
+               "DARIS event-equiv. (Schoenfeld, pooled psi)",
                "Events accrued (reporting scale)",
-               "Statistical information accrued (observed inverse-variance)",
-               "% of DARIS (information) reached",
-               "Estimated cumulative events at which DARIS information was reached")
+               "Info accrued (observed inv-var)",
+               "% of DARIS reached",
+               "Events at DARIS reached (est.)")
   sum_val <- c(round(exp(res_re$b), 3), round(exp(res_re$ci.lb), 3), round(exp(res_re$ci.ub), 3),
                round(HR_anticipated, 3),
                round(I2, 1), round(tau2, 4), round(D2 * 100, 1), round(AF, 3),
@@ -1811,7 +2136,7 @@ tsa_hr <- function(data,
                       ceiling(DARIS_info_threshold_events)))
   if (analysis_endpoint) {
     sum_par <- c(sum_par, sprintf(
-      "Estimated cumulative events at which the analysis-route endpoint (%.3f x DARIS) was reached",
+      "Events at AR endpoint (%.3fxDARIS) reached (est.)",
       route_endpoint))
     sum_val <- c(sum_val, ifelse(is.na(route_endpoint_events_est), NA_real_,
                                  ceiling(route_endpoint_events_est)))
@@ -1822,13 +2147,13 @@ tsa_hr <- function(data,
   ## (see 7d comment and ?tsa_hr, "Estimated additional studies/events").
   if (!analysis_endpoint && !daris_reached) {
     sum_par <- c(sum_par,
-                 "Theoretical additional events to DARIS (Schoenfeld)",
-                 "DARIS (historical rate): cumulative events at which DARIS would be reached",
-                 sprintf("Estimated additional events to DARIS (historical rate; %s)",
-                         info_per_event_basis_label),
-                 sprintf("Estimated additional studies to reach DARIS (%s-based projection)",
+                 "Add'l events to DARIS (Schoenfeld, theoretical)",
+                 "DARIS reached, hist. rate (est. events)",
+                 sprintf("Add'l events to DARIS (hist. rate; %s IPE)",
+                         info_per_event_basis_short),
+                 sprintf("Add'l studies to DARIS (%s-based proj.)",
                         projection_stat),
-                 "Studies excluded from the events projection (zero events / unusable ratio)")
+                 "Studies excluded from projection (zero events/ratio)")
     sum_val <- c(sum_val,
                  additional_events_required_design,
                  ifelse(is.finite(target_events_historical_rate),
@@ -1839,15 +2164,15 @@ tsa_hr <- function(data,
                  n_excluded_events_projection)
   } else if (analysis_endpoint && !final_reached) {
     sum_par <- c(sum_par,
-                 sprintf("Additional information required to reach the analysis-route endpoint (%.3f x DARIS)",
+                 sprintf("Add'l info to AR endpoint (%.3fxDARIS)",
                         route_endpoint),
-                 "Theoretical additional events to analysis-route endpoint (Schoenfeld)",
-                 "Historical information/event-rate projection (cumulative events at the analysis-route endpoint)",
-                 sprintf("Estimated additional events to analysis-route endpoint (historical rate; %s)",
-                         info_per_event_basis_label),
-                 sprintf("Estimated additional studies to reach the analysis-route endpoint (%s-based projection)",
+                 "Add'l events to AR endpoint (Schoenfeld, theoretical)",
+                 "AR endpoint reached, hist. rate (est. events)",
+                 sprintf("Add'l events to AR endpoint (hist. rate; %s IPE)",
+                         info_per_event_basis_short),
+                 sprintf("Add'l studies to AR endpoint (%s-based proj.)",
                         projection_stat),
-                 "Studies excluded from the events projection (zero events / unusable ratio)")
+                 "Studies excluded from projection (zero events/ratio)")
     sum_val <- c(sum_val,
                  round(projection$additional_info_required, 4),
                  additional_events_theoretical,
@@ -1860,10 +2185,10 @@ tsa_hr <- function(data,
   }
   sum_par <- c(sum_par,
                "Crossed conventional boundary",
-               "Crossed TSA monitoring boundary (at any formal look)",
-               "Entered non-binding futility region (at any formal look; not a formal stopping decision)",
-               "Definitive look crossed efficacy boundary (NA if the endpoint was not reached)",
-               "Definitive look did not cross efficacy (final_non_efficacy; NA if the endpoint was not reached)")
+               "Crossed TSA boundary (any formal look)",
+               "Entered futility region (any look; not a stop decision)",
+               "Definitive look crossed efficacy (NA if not reached)",
+               "Definitive look: non-efficacy (NA if not reached)")
   ## ** 0.2.7.22: ** `Value` is a CHARACTER column. Building it with c() of
   ## numbers and logicals silently coerced everything to numeric, so the
   ## TRUE/FALSE decision rows printed as 1/0. Numbers keep their rounding;
@@ -1874,6 +2199,34 @@ tsa_hr <- function(data,
                                        final_crossed_efficacy, final_non_efficacy)))
   summary_df <- data.frame(Parameter = sum_par, Value = sum_val,
                            stringsAsFactors = FALSE)
+  ## 0.2.8.11: name the inference option right below the pooled HR and its CI
+  ## when it is not the standard one (the default table is unchanged).
+  if (!identical(re_inference, "standard")) {
+    summary_df <- rbind(
+      summary_df[1:3, , drop = FALSE],
+      data.frame(Parameter = "Random-effects inference",
+                 Value = .tsahr_re_inference_label(re_inference),
+                 stringsAsFactors = FALSE),
+      summary_df[-(1:3), , drop = FALSE])
+    rownames(summary_df) <- NULL
+  }
+  ## 0.2.8.12: Parameter labels are abbreviated to keep the table readable
+  ## (see the comment where sum_par is first built); this legend is the
+  ## single place the abbreviations are spelled out, returned as an
+  ## attribute so it travels with the table and is printed by
+  ## summary.tsa_hr() -- see ?tsa_hr, "Value".
+  attr(summary_df, "abbreviations") <- c(
+    "RE"          = "random effects",
+    "RIS"         = "Required Information Size",
+    "DARIS"       = "Diversity-Adjusted RIS",
+    "AR endpoint" = "analysis-route endpoint",
+    "psi"         = "allocation proportion in the treatment arm",
+    "hist. rate"  = "historical event/information rate",
+    "IPE"         = "information per event (pooled: total information / total events; otherwise the per-study statistic named, e.g. median)",
+    "proj."       = "projection",
+    "inv-var"     = "inverse-variance",
+    "est."        = "estimated",
+    "Add'l"       = "Additional")
 
   out <- list(
     data = data,
@@ -1883,7 +2236,9 @@ tsa_hr <- function(data,
                        allocation_p_used = allocation_p_used,
                        target_HR = target_HR, HR_anticipated = HR_anticipated,
                        method = method,
-                       method_requested = method_requested),
+                       method_requested = method_requested,
+                       re_inference = re_inference,
+                       re_inference_requested = re_inference_requested),
     res_re = res_re,
     res_fe = res_fe,
     heterogeneity = list(Q = Q, df = df, I2 = I2, tau2 = tau2, D2 = D2,

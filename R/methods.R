@@ -9,6 +9,10 @@ print.tsa_hr <- function(x, ...) {
   cat(sprintf("Studies: %d | Events accrued: %.0f\n",
               nrow(x$data), x$results$events_accrued))
   cat(sprintf("Pooled HR (random effects): %.3f\n", exp(x$res_re$b)))
+  re_inf <- x$parameters$re_inference
+  if (!is.null(re_inf) && !identical(re_inf, "standard")) {
+    cat(sprintf("Random-effects inference: %s\n", .tsahr_re_inference_label(re_inf)))
+  }
   cat(sprintf("Anticipated HR (RIS calc): %.3f\n", x$parameters$HR_anticipated))
   cat(sprintf("Theoretical DARIS event-equivalent: %.0f\n", ceiling(x$information_size$DARIS_events)))
   analysis_route <- identical(x$settings$route_used, "analysis")
@@ -40,12 +44,26 @@ print.tsa_hr <- function(x, ...) {
 
 #' Summarise a tsa_hr object
 #'
+#' Prints \code{object$summary_table} (\code{Parameter}/\code{Value}); since
+#' 0.2.8.12 \code{Parameter} uses short abbreviations (e.g. \code{"DARIS"},
+#' \code{"AR endpoint"}, \code{"RE"}) to keep the table readable, and an
+#' \dQuote{Abbreviations:} line spelling them out is printed directly below
+#' the table (from \code{attr(object$summary_table, "abbreviations")}).
+#'
 #' @param object An object of class \code{"tsa_hr"}.
 #' @param ... Currently unused.
 #' @return The underlying summary data.frame (invisibly printed).
 #' @export
 summary.tsa_hr <- function(object, ...) {
   print(object$summary_table, row.names = FALSE)
+  ## 0.2.8.12: the Parameter column uses short abbreviations to keep the
+  ## table readable; spell them out once here (see ?tsa_hr, "Value").
+  abbr <- attr(object$summary_table, "abbreviations")
+  if (!is.null(abbr) && length(abbr)) {
+    cat("\nAbbreviations: ",
+        paste(sprintf("%s = %s", names(abbr), abbr), collapse = "; "),
+        ".\n", sep = "")
+  }
   if (identical(object$settings$fallback_route, "design")) {
     cat("\n*** NOTE: boundary_route = \"analysis\" FAILED; the results shown are the\n")
     cat("    DESIGN-route (RTSA-derived) result -- see settings$fallback_reason. ***\n")
@@ -111,7 +129,11 @@ summary.tsa_hr <- function(object, ...) {
 #' @param legend Logical; show the boundary-type legend at the bottom of
 #'   the plot. Default \code{TRUE}.
 #' @param caption Logical; show the methods caption below the plot.
-#'   Default \code{TRUE}. When the route's own endpoint (DARIS for
+#'   Default \code{TRUE}. When \code{tsa_hr()} was run with a non-standard
+#'   \code{re_inference} (\code{"hksj"}/\code{"knha"} or \code{"Hksj_adhoc"}),
+#'   the caption gains a line right under the first "Methods" line naming
+#'   that inference option; it is absent for the default \code{"standard"}.
+#'   When the route's own endpoint (DARIS for
 #'   \code{boundary_route = "design"}; the analysis-route endpoint for
 #'   \code{"analysis"}) has not yet been reached, the caption gains final
 #'   lines with the projection: "Theoretical additional events to DARIS
@@ -343,9 +365,14 @@ plot.tsa_hr <- function(x, legend = TRUE, caption = TRUE,
     side = rep(c("upper", "lower"), each = 2),
     type = "Naive boundaries"
   )
+  ## 0.2.8.12: the first-look Z is NA under HKSJ re_inference (undefined at
+  ## k = 1; see .tsahr_cumulative_re_inference()). That row is dropped here
+  ## explicitly, rather than relying only on the layers' na.rm = TRUE, so
+  ## the point/line are never drawn regardless of ggplot2 version behaviour.
+  z_curve_df <- cumul_df[!is.na(cumul_df$Z), , drop = FALSE]
   z_line <- data.frame(
-    cum_events = cumul_df$cum_events,
-    y = cumul_df$Z,
+    cum_events = z_curve_df$cum_events,
+    y = z_curve_df$Z,
     side = "z",
     type = "Z scores"
   )
@@ -367,8 +394,11 @@ plot.tsa_hr <- function(x, legend = TRUE, caption = TRUE,
                    linewidth = type, group = interaction(type, side)),
       na.rm = TRUE
     ) +
-    ggplot2::geom_point(data = cumul_df, ggplot2::aes(x = cum_events, y = Z, color = "Z scores"),
-                         size = 2) +
+    ## z_curve_df already excludes the NA first look under HKSJ re_inference
+    ## (see above); na.rm = TRUE is kept as a belt-and-braces guard against
+    ## any other NA that might reach this layer.
+    ggplot2::geom_point(data = z_curve_df, ggplot2::aes(x = cum_events, y = Z, color = "Z scores"),
+                         size = 2, na.rm = TRUE) +
     ggplot2::geom_segment(ggplot2::aes(x = 0, xend = x_max, y = 0, yend = 0),
                            color = "grey60", linewidth = 0.3) +
     ggplot2::annotate("text",
@@ -521,6 +551,20 @@ plot.tsa_hr <- function(x, legend = TRUE, caption = TRUE,
              "alpha = %.0f%% (two-sided), power = %.0f%% | Diversity D\u00b2 = %.0f%%, Adjustment factor = %.2f"),
       .tsahr_method_label(if (is.null(x$parameters$method)) "DL" else x$parameters$method),
       allocation_p_used, alpha_two_sided * 100, power * 100, D2 * 100, AF)
+    ## 0.2.8.11: name the random-effects inference option on its own line,
+    ## directly under the first "Methods:" line, when it is not "standard".
+    re_inf <- x$parameters$re_inference
+    if (!is.null(re_inf) && !identical(re_inf, "standard")) {
+      re_line <- if (identical(re_inf, "hksj_adhoc")) {
+        paste0("Random-effects inference: HKSJ with ad hoc correction (variance scale max(1, q); ",
+               "t distribution, k-1 df); Z = normal-equivalent of the t-statistic")
+      } else {
+        paste0("Random-effects inference: HKSJ (Hartung-Knapp-Sidik-Jonkman; ",
+               "t distribution, k-1 df); Z = normal-equivalent of the t-statistic")
+      }
+      cap_split <- strsplit(methods_caption, "\n", fixed = TRUE)[[1]]
+      methods_caption <- paste(c(cap_split[1], re_line, cap_split[-1]), collapse = "\n")
+    }
     if (analysis_route) {
       methods_caption <- paste0(methods_caption, sprintf(
         "\nBoundary route: RTSA analysis (formal endpoint = %.3f x DARIS information)",

@@ -7,7 +7,8 @@ tsa_hr(data, alpha_two_sided = 0.05, power = 0.80,
   target_HR = NA_real_, method = "DL", order_by = NULL, verbose = TRUE,
   boundary_route = c("design", "analysis"), legacy_fallback = TRUE,
   projection_stat = c("median", "mean"),
-  info_per_event_basis = c("per_study", "pooled"))
+  info_per_event_basis = c("per_study", "pooled"),
+  re_inference = "standard")
 }
 \arguments{
 \item{data}{A data.frame, or a path to an .xlsx file, containing one row
@@ -118,6 +119,33 @@ RTSA-comparable); \code{FALSE} instead stops \code{tsa_hr()} with an error
 (strict fail-closed behaviour, appropriate when the result will be
 reported as RTSA-equivalent).}
 
+\item{re_inference}{Character string selecting how inference on the pooled
+\emph{random-effects} effect, and on every cumulative look, is carried out;
+matching is case-insensitive. The heterogeneity-variance estimator
+(\code{method}) and the pooled point estimate are the same under every
+option -- only the standard error, test statistic, p-value and 95\% CI
+change. One of:
+\describe{
+  \item{\code{"standard"}}{(default; exactly the behaviour of earlier tsahr
+    versions) the usual Wald-type inference: standard normal reference
+    distribution, variance \code{1 / sum(w)} with random-effects weights
+    \code{w = 1 / (Std_Error^2 + tau^2)}.}
+  \item{\code{"hksj"} (alias \code{"knha"})}{Hartung-Knapp-Sidik-Jonkman
+    (Knapp-Hartung) adjustment: the variance is multiplied by
+    \code{q = sum(w * (log_HR - pooled)^2) / (k - 1)} and the test and CI
+    use a t distribution with \code{k - 1} degrees of freedom
+    (\code{metafor::rma(test = "knha")}). \code{q} may be below 1, in which
+    case the adjusted CI can be \emph{narrower} than the standard one.}
+  \item{\code{"Hksj_adhoc"} (alias \code{"knha_adhoc"})}{HKSJ with the ad hoc
+    correction that \code{q} is never allowed to be below 1: the variance is
+    multiplied by \code{max(1, q)} (t distribution, \code{k - 1} df), so the
+    standard error is never smaller than under \code{"standard"}. Also known
+    as the modified/truncated HKSJ method.}
+}
+See \dQuote{Random-effects inference} under Details for how the option
+enters the cumulative Z-curve and what it does \emph{not} change. When a
+non-standard option is used, the plot caption states it.}
+
 \item{projection_stat}{Character string, one of \code{"median"}
 (default) or \code{"mean"}, selecting the summary statistic used to turn
 the OBSERVED per-study contributions into "typical" values for the
@@ -204,6 +232,21 @@ Details) with \code{method} (the \code{projection_stat} used),
 frame (character \code{Parameter} and \code{Value} columns; \code{Value} is
 character so logical rows print as TRUE/FALSE/NA rather than 1/0/NA). Use \code{plot()}, \code{summary()}, or \code{print()} on the
 result.
+
+\code{parameters} records \code{re_inference} (the normalised option
+actually used: \code{"standard"}, \code{"hksj"} or \code{"hksj_adhoc"}) and
+\code{re_inference_requested} (what the caller passed). With a non-standard
+option, \code{res_re} is the corresponding \code{metafor::rma} fit,
+\code{cumulative} gains the columns \code{re_scale} and \code{re_df}, and
+the summary table gains a \dQuote{Random-effects inference} row;
+\code{cumulative$Z} is \code{NA} at the first look (see
+\dQuote{Random-effects inference} under Details).
+
+The summary table's \code{Parameter} column (0.2.8.12) uses short
+abbreviations (e.g. \code{"DARIS"}, \code{"AR endpoint"}, \code{"RE"}) to
+stay readable; the expansions are returned as a named character vector in
+\code{attr(summary_table, "abbreviations")} and are printed by
+\code{summary()} underneath the table.
 }
 \description{
 Performs a Trial Sequential Analysis (TSA) for a meta-analysis of
@@ -235,6 +278,66 @@ the resulting Z process does not exactly satisfy that canonical model;
 the displayed monitoring boundaries should therefore be regarded as an
 approximation (as in the official Copenhagen Trial Unit TSA software),
 not an exact result.
+
+\strong{Random-effects inference (\code{re_inference}, 0.2.8.11).}
+\code{re_inference} changes how the \emph{random-effects} pooled effect and
+each cumulative look are tested, not how heterogeneity is estimated:
+\code{method} still chooses the tau^2 estimator, and the pooled point
+estimate (log-HR) and tau^2 at every look are identical under all three
+options. For \code{"hksj"} and \code{"Hksj_adhoc"} the standard error,
+p-value and 95\% CI of the pooled HR (\code{res_re}, printed output, summary
+table and plot subtitle) and of every row of \code{cumulative} are the HKSJ
+ones, computed look by look from the studies accrued so far.
+\itemize{
+  \item \strong{Z-curve scale.} The monitoring boundaries and the
+    conventional boundary are defined on the standard normal scale, whereas
+    an HKSJ statistic follows a t distribution with \code{k - 1} df at look
+    \code{k}. The cumulative \code{Z} is therefore the
+    \emph{normal-equivalent} of the HKSJ t statistic: the value with the
+    same two-sided p-value on the normal scale (\code{sign(estimate) *
+    qnorm(1 - p / 2)}). Consequently \code{|Z| >= qnorm(1 - alpha/2)}
+    exactly when the HKSJ p-value is below alpha, and the conventional
+    (naive) boundary keeps its usual meaning. The raw t statistic is kept in
+    \code{cumulative$zval}, the degrees of freedom in
+    \code{cumulative$re_df} and the variance multiplier in
+    \code{cumulative$re_scale} (these two columns exist only for
+    non-standard options). The t distribution is not what the alpha spending
+    boundaries were derived for, so this is a further approximation on top
+    of the one described under \dQuote{Random-effects caveat}.
+  \item \strong{Early looks.} HKSJ needs at least two studies: the HKSJ
+    statistic is undefined at \code{k = 1} (a t distribution on 0 df has no
+    defined quantile), so \code{cumulative$Z} is \code{NA} at the first
+    look for \code{"hksj"}/\code{"Hksj_adhoc"} -- shown as \code{NA} in
+    the printed cumulative tables and simply not drawn on the plotted
+    Z-curve (\code{cumulative$se}, \code{$pval} etc. still hold the
+    standard, z-based values at that look; only \code{Z} is withheld). A
+    look at which the scale factor is zero or not finite (e.g. all
+    estimates identical) likewise keeps the standard z-based \code{Z};
+    both cases have \code{re_df = Inf} and \code{re_scale = 1}. At the
+    second look \code{k - 1 = 1} degree of freedom, so early HKSJ looks
+    (however defined) are very conservative and erratic; a
+    \code{warning()} says so (with \code{call. = FALSE}, the same way as
+    the \code{target_HR}-near-1 caveat below) whenever a non-standard
+    \code{re_inference} is actually used, regardless of \code{verbose}.
+    Early cumulative HKSJ values
+    should not be interpreted as directly comparable in magnitude with
+    conventional normal Z-statistics.
+  \item \strong{What is not changed.} The Diversity D^2, the adjustment
+    factor, DARIS, the information fractions and hence the alpha/beta
+    boundaries are always computed from the standard random-effects and
+    equal-effects variances and do not depend on \code{re_inference}, as do
+    I^2, tau^2 and Q. Only the Z-curve (and the decisions that compare it
+    with the boundaries) and the reported pooled inference change. With
+    \code{target_HR = NA} the anticipated HR is the pooled point estimate,
+    which is also unaffected.
+  \item \strong{Degenerate data.} If the HKSJ scale factor of the full data
+    set is zero or not finite, \code{tsa_hr()} warns and falls back to
+    \code{"standard"}; \code{parameters$re_inference} then reads
+    \code{"standard"} while \code{parameters$re_inference_requested} keeps
+    what was asked for.
+}
+The plot caption names the option whenever it is not \code{"standard"};
+\code{print()} and \code{summary()} do the same.
 
 \strong{Boundary engine:} since 0.2.7.11 the alpha (efficacy) and
 non-binding beta (futility) boundaries are computed by compiled C++ code
