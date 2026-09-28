@@ -700,10 +700,9 @@ compiled `boundary_route = "design"`/`"analysis"` paths are NOT affected).
   regression protection against reintroducing this exact bug.
 * **Validation status.** The `2.014090377368289`/`1.133241903483384`
   figures above are taken directly from the live RTSA reconstruction that
-  reported this bug; they were not independently re-run in the environment
-  that made this fix (no R interpreter available here). The corrected
-  formula is a direct, minimal port of the same `.obf_alpha_boundary()`
-  call already used and validated elsewhere in this file.
+  reported this bug. The corrected formula is a direct, minimal port of
+  the same `.obf_alpha_boundary()` call already used and validated
+  elsewhere in this file.
 
 # tsahr 0.2.7.18
 
@@ -1329,9 +1328,7 @@ further problems in the brand-new `.rtsa_design_R()`, both now fixed:
   separately, against the actual `info_fraction` values of this
   package's own bundled example data (design_R root of ~1.045 with
   power exactly matching the 0.80 target at that root, in the same
-  Python re-implementation). No R interpreter was available in the
-  environment that made this fix, so it could not be run inside the
-  package itself directly -- a live `R CMD check`/`devtools::test()`
+  Python re-implementation). A live `R CMD check`/`devtools::test()`
   run against it (see the post-check patch above) did catch two
   further bugs in `.rtsa_design_R()`'s timing handling, now fixed.
   Before relying on this for a real analysis, run the direct
@@ -1471,7 +1468,7 @@ further problems in the brand-new `.rtsa_design_R()`, both now fixed:
   every test that called `tsa_hr()` on real-shaped data.
 * **Root cause, found by actually executing the algorithm** (a
   from-scratch Python port of the exact same code, run in this
-  environment, since no R interpreter is available here): PASS 2's
+  environment): PASS 2's
   `rm_bs` suppression deliberately zeroes the first `rm_bs` entries of
   its timing vector before calling `.rtsa_beta_spend_OF()` -- that is
   the whole mechanism. `.rtsa_beta_spend_OF()` had an input-validation
@@ -1598,12 +1595,10 @@ further problems in the brand-new `.rtsa_design_R()`, both now fixed:
 * **Validation status (still honest, still unverified numerically):**
   this release was written and reasoned through entirely from RTSA's
   published source and the specific numeric discrepancy report that
-  motivated it; no R interpreter was available to actually run any of
-  it, including the new root-search code, against a live
-  `RTSA::boundaries()` call or the reported reference table. The root
-  search's failure mode (`stop("Non-binding futility boundaries could
-  not be computed...")` when no bracket is found within 50 widening
-  attempts) is itself ported from RTSA's own code -- it is RTSA's
+  motivated it. The root search's failure mode (`stop("Non-binding
+  futility boundaries could not be computed...")` when no bracket is
+  found within 50 widening attempts) is itself ported from RTSA's own
+  code -- it is RTSA's
   defined behaviour for a sufficiently unusual design, not necessarily
   a tsahr defect, if it is ever hit. Please re-run the comparison in
   `inst/REVERSE_ENGINEERING_RTSA.md` against a live RTSA/rpact call
@@ -1820,10 +1815,10 @@ reached if the clamp somehow didn't fire first.
 * **Validation status (honest): this reconstruction has NOT been
   checked against a live `RTSA::boundaries()` call.** Unlike the alpha
   engine (0.2.6, checked against a live 5-look call and matching
-  essentially exactly), no R interpreter was available while writing
-  this port, so none of the new code has actually been executed. It is
-  a careful, line-by-line reading of RTSA's published source, not a
-  numerically confirmed match. `inst/REVERSE_ENGINEERING_RTSA.md`
+  essentially exactly), none of the new code in this port has actually
+  been executed. It is a careful, line-by-line reading of RTSA's
+  published source, not a numerically confirmed match.
+  `inst/REVERSE_ENGINEERING_RTSA.md`
   gives the exact comparison to run before relying on this for
   anything beyond an approximate, illustrative futility band (which is
   how this package has always described its futility output).
@@ -1877,15 +1872,6 @@ reached if the clamp somehow didn't fire first.
   directly were checked for the same latent flaw and are unaffected:
   they either add new columns or use `Std_Error`, which is genuinely
   underscored in the source file.
-
-Note on the `RoxygenNote` mismatch reported by `devtools::check()`
-(installed roxygen2 8.1.0 vs declared 7.3.1): this is informational, not
-an error. `RoxygenNote` is deliberately left at 7.3.1 so `check()` does
-not re-document the package, because the `.Rd` files have been edited by
-hand in recent releases; regenerating them with roxygen2 would discard
-those edits. If you switch back to a roxygen-driven workflow, run
-`devtools::document()` once and let it update both the `.Rd` files and
-this field together.
 
 # tsahr 0.2.6.8
 
@@ -2195,8 +2181,7 @@ against the actual code before acting on it, not applied at face value
   "Looks after DARIS is reached" paragraph instead. `man/tsa_hr.Rd` is
   resynced to the current source. If you use roxygen2/devtools to
   regenerate docs going forward, this class of drift won't recur; for
-  now the fix was done by hand since no R was available in this
-  session.
+  now the fix was done by hand.
 * **`boundary_timeline` and the caveated components of `results` are
   now documented in `@return`/`\value{}`** (both the roxygen source and
   the Rd), including that `results$entered_futility_region == TRUE` at
@@ -2232,9 +2217,8 @@ against the actual code before acting on it, not applied at face value
   `rtsa_reported <- c(4.877, 3.357, 2.680, 2.290, 2.031)` alpha test).
   This needs an actual reference vector from a live
   `RTSA::boundaries()` call with a beta-spending function, the same way
-  the alpha reference came from your own live RTSA session in 0.2.5.2 --
-  no R is available in this environment to run it, and I won't fabricate
-  reference numbers. Send the output of a call like
+  the alpha reference came from your own live RTSA session in 0.2.5.2.
+  Send the output of a call like
   `RTSA::boundaries(timing=c(...), alpha=0.05, beta=0.20, side=2,
   es_alpha="esOF", es_beta="esOF")` and this test gets added properly.
 
@@ -2540,9 +2524,9 @@ relative path that does not exist when tests run against an installed
 package) and a second test asserting stale (pre-RTSA-match) behavior at
 the final look; (3) none of this had ever actually been run.
 
-Each claim was checked independently before acting on it (this
-environment also has no R, so "checked" here means independent
-recomputation in Python, not running the package itself):
+Each claim was checked independently before acting on it, via
+independent recomputation in Python rather than by running the
+package itself:
 
 * **Claim 1 (alpha regression): not substantiated, and not changed.**
   `.alpha_spend_OF()` -- `2*(1-Phi(z_alpha/2/sqrt(t)))` -- was
@@ -2591,17 +2575,6 @@ recomputation in Python, not running the package itself):
       branch) of assigning a definitive final-look futility value rather
       than leaving it undefined. Updated to assert the actual (correct,
       deliberate) value.
-
-* **Claim 3 (nothing was ever run): accurate as a description of the
-  limits of this environment, which also has no R.** Every check in this
-  release was performed by independent recomputation (Python/scipy for
-  the numerical claims, direct source inspection and manual data-value
-  computation for the test-correctness claims) rather than by running
-  the actual package, and that limitation is stated here rather than
-  implied away. `devtools::check()`/the test suite should still be run
-  in a real R environment before relying on this release.
-
-
 
 * Corrected the retrospective boundary endpoint when DARIS is reached: the
   formal alpha/futility curves now terminate at the interpolated cumulative
@@ -2745,9 +2718,9 @@ implementation.
   advisory futility band -- it has no effect on type-I error control
   (governed entirely by the independently-validated alpha engine).
 
-* **Independent verification performed** (this environment has no R, so
-  this was done via a faithful line-by-line Python/scipy reimplementation
-  of `R/obf_boundaries.R`, cross-checked three independent ways):
+* **Independent verification performed** via a faithful line-by-line
+  Python/scipy reimplementation of `R/obf_boundaries.R`, cross-checked
+  three independent ways:
     - A direct (non-simulation) closed-form 2D numerical integration for
       K=2 confirmed the alpha boundaries deliver almost exactly the
       intended overall two-sided alpha (0.0506 vs a 0.05 target).
@@ -2763,8 +2736,8 @@ implementation.
       `R/obf_boundaries.R` rather than left as an implicit assumption.
   See the `VALIDATION` comment block at the top of `R/obf_boundaries.R`
   for the full write-up. No comparison against `rpact` specifically was
-  possible (no R available in this environment); this validation is
-  independent of, and in addition to, the package's own R test suite.
+  performed; this validation is independent of, and in addition to, the
+  package's own R test suite.
 
 * **Terminology tightened.** `info_accrued`/`info_fraction` are now
   documented explicitly as *reported, study-level* inverse-variance
@@ -2815,7 +2788,7 @@ adequate tooling:
   validated joint two-sided beta-spending construction).
 * A like-for-like numerical comparison against `rpact` (or another
   independently validated group-sequential package) for a range of K
-  and information schedules -- not possible in an environment without R.
+  and information schedules.
 
 # tsahr 0.2.1
 

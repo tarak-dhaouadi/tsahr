@@ -2,6 +2,10 @@
 #'
 #' @param x An object of class \code{"tsa_hr"}.
 #' @param ... Currently unused.
+#' @return An object of class \code{"tsa_hr"}, namely the same object
+#'   \code{x} supplied to the method, returned invisibly. The method
+#'   prints a concise summary of the Trial Sequential Analysis results
+#'   and returns the original object unchanged.
 #' @export
 print.tsa_hr <- function(x, ...) {
   cat("Trial Sequential Analysis (Hazard Ratios)\n")
