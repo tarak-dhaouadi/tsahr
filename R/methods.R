@@ -164,7 +164,9 @@ summary.tsa_hr <- function(object, ...) {
 #' @param daris_label_x,daris_label_y Position (in data coordinates: x =
 #'   cumulative events, y = Z-score) for the theoretical DARIS
 #'   event-equivalent label. Default \code{NULL} uses the built-in
-#'   position (just right of its vertical line, near the top of the plot).
+#'   position (just right of its vertical line; near the top of the plot
+#'   when the Z-curve is negative, near the bottom when it is positive --
+#'   from 0.2.8.18, see \code{events_label_y}).
 #' @param info_threshold_label_size Font size for the "DARIS information
 #'   reached" label (only shown when DARIS has actually been reached).
 #'   Default \code{3.2}.
@@ -175,7 +177,16 @@ summary.tsa_hr <- function(object, ...) {
 #'   Default \code{3.2}.
 #' @param events_label_x,events_label_y Position (in data coordinates) for
 #'   the "Events accrued" label. Default \code{NULL} uses the built-in
-#'   position (bottom right, above the last data point).
+#'   position (right-aligned at the last cumulative event count): bottom
+#'   of the plot when the Z-curve is negative, top of the plot (above the
+#'   curve) when it is positive. From 0.2.8.18 the default vertical
+#'   placement of the four DARIS-related labels (theoretical DARIS,
+#'   historical rate, DARIS information reached, analysis-route endpoint)
+#'   and of this label depends on the sign of the last Z-score: Z positive
+#'   puts the DARIS labels in the lower part and this label in the upper
+#'   part; Z negative (or zero) puts the DARIS labels in the upper part and
+#'   this label in the lower part. Any explicit \code{*_label_y} overrides
+#'   the default.
 #' @param endpoint_label_size Font size for the "Analysis-route endpoint
 #'   (Design_R x DARIS) reached" label (only shown when
 #'   \code{boundary_route = "analysis"}; from 0.2.8.3 it is also drawn, worded
@@ -336,6 +347,16 @@ plot.tsa_hr <- function(x, legend = TRUE, caption = TRUE,
   y_abs_max <- max(abs(cumul_df$Z), finite_bounds, na.rm = TRUE)
   y_limit <- y_abs_max * 1.15
 
+  ## 0.2.8.18: default vertical placement of the labels depends on the sign
+  ## of the Z-curve (its last defined point). Z-curve negative (or zero /
+  ## undefined): the four DARIS-related labels sit in the UPPER part of the
+  ## plot and "Events accrued" in the lower part (as before). Z-curve
+  ## positive: the four DARIS-related labels move to the LOWER part and
+  ## "Events accrued" goes to the upper part, above the curve. `ypos_sgn`
+  ## is +1 / -1 accordingly; explicit *_label_y arguments always win.
+  z_defined <- cumul_df$Z[!is.na(cumul_df$Z)]
+  ypos_sgn <- if (length(z_defined) && z_defined[length(z_defined)] > 0) -1 else 1
+
   boundary_line$TSA_boundary_upper <- pmin(boundary_line$TSA_boundary_upper, y_limit)
   boundary_line$TSA_boundary_lower <- pmax(boundary_line$TSA_boundary_lower, -y_limit)
 
@@ -407,7 +428,7 @@ plot.tsa_hr <- function(x, legend = TRUE, caption = TRUE,
                            color = "grey60", linewidth = 0.3) +
     ggplot2::annotate("text",
                        x = if (is.null(events_label_x)) max(cumul_df$cum_events) else events_label_x,
-                       y = if (is.null(events_label_y)) -y_limit * 0.92 else events_label_y,
+                       y = if (is.null(events_label_y)) -ypos_sgn * y_limit * 0.92 else events_label_y,
                        label = paste0("Events accrued = ", events_accrued),
                        hjust = 1, vjust = 0, size = events_label_size, color = "steelblue4") +
     ggplot2::scale_color_manual(name = NULL, values = line_colors) +
@@ -438,7 +459,7 @@ plot.tsa_hr <- function(x, legend = TRUE, caption = TRUE,
                            linetype = "dotted", linewidth = 0.6) +
       ggplot2::annotate("text",
                          x = if (is.null(daris_label_x)) DARIS_events else daris_label_x,
-                         y = if (is.null(daris_label_y)) y_limit * 0.92 else daris_label_y,
+                         y = if (is.null(daris_label_y)) ypos_sgn * y_limit * 0.92 else daris_label_y,
                          label = paste0("Theoretical DARIS event-equivalent ~ ", ceiling(DARIS_events)),
                          hjust = -0.05, vjust = 0, size = daris_label_size)
   }
@@ -470,7 +491,7 @@ plot.tsa_hr <- function(x, legend = TRUE, caption = TRUE,
                          x = if (is.null(historical_label_x)) historical_target_events
                              else historical_label_x,
                          y = if (is.null(historical_label_y)) {
-                               y_limit * (if (analysis_route) 0.41 else 0.75)
+                               ypos_sgn * y_limit * (if (analysis_route) 0.41 else 0.75)
                              } else historical_label_y,
                          label = hist_label,
                          hjust = -0.05, vjust = 0,
@@ -493,7 +514,7 @@ plot.tsa_hr <- function(x, legend = TRUE, caption = TRUE,
       ggplot2::annotate("text",
                          x = if (is.null(info_threshold_label_x)) DARIS_info_threshold_events
                              else info_threshold_label_x,
-                         y = if (is.null(info_threshold_label_y)) y_limit * 0.75
+                         y = if (is.null(info_threshold_label_y)) ypos_sgn * y_limit * 0.75
                              else info_threshold_label_y,
                          label = paste0("DARIS information reached ~ ",
                                         ceiling(DARIS_info_threshold_events), " events (est.)"),
@@ -511,7 +532,7 @@ plot.tsa_hr <- function(x, legend = TRUE, caption = TRUE,
       ggplot2::annotate("text",
                          x = if (is.null(endpoint_label_x)) route_endpoint_events
                              else endpoint_label_x,
-                         y = if (is.null(endpoint_label_y)) y_limit * 0.58
+                         y = if (is.null(endpoint_label_y)) ypos_sgn * y_limit * 0.58
                              else endpoint_label_y,
                          label = paste0("Analysis-route endpoint (",
                                         sprintf("%.3f", route_endpoint),
@@ -534,7 +555,7 @@ plot.tsa_hr <- function(x, legend = TRUE, caption = TRUE,
       ggplot2::annotate("text",
                          x = if (is.null(endpoint_label_x)) endpoint_theoretical_events
                              else endpoint_label_x,
-                         y = if (is.null(endpoint_label_y)) y_limit * 0.58
+                         y = if (is.null(endpoint_label_y)) ypos_sgn * y_limit * 0.58
                              else endpoint_label_y,
                          label = paste0("Analysis-route endpoint (",
                                         sprintf("%.3f", route_endpoint),

@@ -78,7 +78,9 @@ event-equivalent" label. Default \code{3.2}.}
 \item{daris_label_x, daris_label_y}{Position (in data coordinates: x =
 cumulative events, y = Z-score) for the theoretical DARIS
 event-equivalent label. Default \code{NULL} uses the built-in
-position (just right of its vertical line, near the top of the plot).}
+position (just right of its vertical line; near the top of the plot
+when the Z-curve is negative, near the bottom when it is positive --
+from 0.2.8.18, see \code{events_label_y}).}
 
 \item{info_threshold_label_size}{Font size for the "DARIS information
 reached" label (only shown when DARIS has actually been reached).
@@ -93,7 +95,16 @@ Default \code{3.2}.}
 
 \item{events_label_x, events_label_y}{Position (in data coordinates) for
 the "Events accrued" label. Default \code{NULL} uses the built-in
-position (bottom right, above the last data point).}
+position (right-aligned at the last cumulative event count): bottom
+of the plot when the Z-curve is negative, top of the plot (above the
+curve) when it is positive. From 0.2.8.18 the default vertical
+placement of the four DARIS-related labels (theoretical DARIS,
+historical rate, DARIS information reached, analysis-route endpoint)
+and of this label depends on the sign of the last Z-score: Z positive
+puts the DARIS labels in the lower part and this label in the upper
+part; Z negative (or zero) puts the DARIS labels in the upper part and
+this label in the lower part. Any explicit \code{*_label_y} overrides
+the default.}
 
 \item{endpoint_label_size}{Font size for the "Analysis-route endpoint
 (Design_R x DARIS) reached" label (only shown when

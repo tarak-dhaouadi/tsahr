@@ -2,6 +2,10 @@
 
 Trial Sequential Analysis (TSA) for meta-analyses of hazard ratios, in R.
 
+**Standalone Java application**
+
+A standalone Java implementation of `tsahr` is available as [tsahr-java](https://github.com/tarak-dhaouadi/tsahr-java), providing the same TSA methodology without requiring R.
+
 Adapts the classical Wetterslev/Thorlund/Copenhagen Trial Unit TSA
 framework to time-to-event outcomes, in the spirit of Miladinovic et al.
 (2013). It's worth distinguishing what's established methodology versus

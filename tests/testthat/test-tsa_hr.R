@@ -921,3 +921,33 @@ test_that("design route: additional_events_theoretical equals the Schoenfeld des
   expect_equal(res$projection$additional_events_theoretical,
                res$projection$additional_events_required_design)
 })
+
+test_that("0.2.8.18: default label placement follows the sign of the Z-curve", {
+  path <- legacy_example_data()
+  res <- suppressMessages(tsa_hr(path, target_HR = 0.80, verbose = FALSE))
+  txt_layers <- function(p) Filter(function(ly) inherits(ly$geom, "GeomText"), p$layers)
+  ## annotate("text") layers: label -> y
+  ys <- function(p) {
+    L <- txt_layers(p)
+    setNames(vapply(L, function(ly) ly$data$y %||% ly$aes_params$y, numeric(1)),
+             vapply(L, function(ly) as.character(ly$data$label %||% ly$aes_params$label), ""))
+  }
+  `%||%` <- function(a, b) if (is.null(a)) b else a
+
+  z_last <- tail(res$cumulative$Z[!is.na(res$cumulative$Z)], 1)
+  p <- suppressMessages(plot(res))
+  y <- ys(p)
+  ev <- y[grepl("^Events accrued", names(y))]
+  daris <- y[grepl("DARIS|endpoint|Historical", names(y))]
+  if (z_last > 0) {
+    expect_true(all(ev > 0)); expect_true(all(daris < 0))
+  } else {
+    expect_true(all(ev < 0)); expect_true(all(daris > 0))
+  }
+
+  ## explicit y arguments always win
+  p2 <- suppressMessages(plot(res, daris_label_y = 1.5, events_label_y = -1.5))
+  y2 <- ys(p2)
+  expect_equal(unname(y2[grepl("^Theoretical DARIS", names(y2))]), 1.5)
+  expect_equal(unname(y2[grepl("^Events accrued", names(y2))]), -1.5)
+})

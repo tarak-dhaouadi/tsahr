@@ -1,3 +1,20 @@
+# tsahr 0.2.8.18
+
+## plot(): default label placement now depends on the sign of the Z-curve
+
+* When the cumulative Z-curve is **positive** (sign of its last defined
+  point), the four DARIS-related labels (theoretical DARIS, historical-rate
+  projection, "DARIS information reached", analysis-route endpoint) are now
+  placed by default in the **lower** part of the plot, and the "Events
+  accrued" label in the **upper** part, above the curve.
+* When the Z-curve is **negative** (or zero/undefined) the layout is
+  unchanged: DARIS labels in the upper part, "Events accrued" at the bottom.
+* These are defaults only: `daris_label_y`, `info_threshold_label_y`,
+  `historical_label_y`, `endpoint_label_y` and `events_label_y`
+  still override them. The vertical stacking order of the four DARIS
+  labels is mirrored, not changed.
+* Docs updated (`?plot.tsa_hr`); a test covers both signs.
+
 # tsahr 0.2.8.17
 
 ## HKSJ early-look caveat is now a warning(), matching the target_HR-near-1 caveat
